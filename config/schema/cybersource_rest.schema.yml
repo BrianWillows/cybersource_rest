@@ -1,0 +1,10 @@
+commerce_payment.commerce_payment_gateway.plugin.cybersource_rest:
+  type: commerce_payment_gateway_configuration
+  label: 'Cybersource REST (Microform)'
+  mapping:
+    transaction_type:
+      type: string
+      label: 'Transaction type'
+    log_api_calls:
+      type: boolean
+      label: 'Log API requests and responses'

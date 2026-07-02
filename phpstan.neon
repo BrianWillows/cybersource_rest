@@ -1,0 +1,11 @@
+# PHPStan configuration for cybersource_rest.
+#
+# The module is clean at level 6 (with the mglaman/phpstan-drupal extension,
+# which Drupal.org CI and core-dev provide). Pinning the level here keeps local
+# runs in step with CI.
+parameters:
+  level: 6
+  paths:
+    - .
+  excludePaths:
+    - tests/playwright/*

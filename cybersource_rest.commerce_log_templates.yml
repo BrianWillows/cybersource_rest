@@ -1,0 +1,4 @@
+cybersource_rest_response:
+  category: commerce_order
+  label: 'Cybersource REST response'
+  template: '{{ message }}'

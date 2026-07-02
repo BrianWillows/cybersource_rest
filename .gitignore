@@ -1,0 +1,4 @@
+# Never commit installed dependencies or secrets.
+/vendor/
+node_modules/
+cybersource_rest.yml

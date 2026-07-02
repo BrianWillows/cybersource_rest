@@ -1,0 +1,18 @@
+{
+    "name": "drupal/cybersource_rest",
+    "description": "Cybersource REST / Flex Microform v2 payment gateway for Drupal Commerce. Microform-hosted card fields, server-side REST charge, credentials in a private file.",
+    "type": "drupal-module",
+    "license": "GPL-2.0-or-later",
+    "homepage": "https://www.drupal.org/project/cybersource_rest",
+    "authors": [
+        {
+            "name": "Brian Willows",
+            "email": "brian@Graith.co.uk",
+            "role": "Maintainer"
+        }
+    ],    
+    "require": {
+        "drupal/commerce": "^3",
+        "cybersource/rest-client-php": "^0.0.65"
+    }
+}

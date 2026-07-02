@@ -1,0 +1,11 @@
+form:
+  version: 1.0.5
+  css:
+    theme:
+      css/cybersource-rest.css: {}
+  js:
+    js/cybersource-rest.js: {}
+  dependencies:
+    - core/drupal
+    - core/drupalSettings
+    - core/once

@@ -1,0 +1,201 @@
+/**
+ * Cybersource REST / Microform card fields.
+ *
+ * Designed to BLEND with the host theme's own form inputs rather than present a
+ * separate "card" widget: no panel/shadow, full-width fields, inherited
+ * typography and text colour, and a neutral input style close to common themes.
+ * The card-number and CVV are Cybersource Microform iframes mounted into
+ * .cc-hosted; brand icons and the tick/cross live in ../images and are toggled
+ * by the JS via classes.
+ */
+
+.cybersource-rest-card,
+.cybersource-rest-card .cc-card {
+  color: inherit;
+  font-family: inherit;
+}
+
+/* Accepted-card brand row. */
+.cybersource-rest-card .cc-accepted {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.9rem;
+}
+
+.cybersource-rest-card .cc-accepted-icon {
+  width: 2.4rem;
+  height: 1.55rem;
+  background: center / contain no-repeat;
+}
+
+.cybersource-rest-card .cc-accepted-icon.visa { background-image: url("../images/cards/visa.png"); }
+.cybersource-rest-card .cc-accepted-icon.mastercard { background-image: url("../images/cards/mastercard.png"); }
+.cybersource-rest-card .cc-accepted-icon.maestro { background-image: url("../images/cards/maestro.png"); }
+.cybersource-rest-card .cc-accepted-icon.amex { background-image: url("../images/cards/amex.png"); }
+
+.cybersource-rest-card .cc-field {
+  margin-bottom: 1rem;
+}
+
+.cybersource-rest-card label {
+  display: block;
+  font-size: 0.9rem;
+  margin-bottom: 0.35rem;
+  color: inherit;
+}
+
+.cybersource-rest-card .cc-input-wrap {
+  position: relative;
+}
+
+/* The text input and the hosted-iframe shells share one neutral input look that
+   sits comfortably next to a theme's native form fields. */
+.cybersource-rest-card .cc-input,
+.cybersource-rest-card .cc-hosted {
+  box-sizing: border-box;
+  width: 100%;
+  height: 2.7rem;
+  padding: 0 2.4rem 0 0.75rem;
+  font-size: 1rem;
+  color: inherit;
+  background: #fff;
+  border: 1px solid #ccced3;
+  border-radius: 0.375rem;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* Hosted Microform iframe slots: the iframe fills the shell. The Flex SDK
+   injects its own container styling, so these !important overrides are needed to
+   keep the hosted PAN/CVV shells visually identical to our own (expiry) input. */
+.cybersource-rest-card .cc-hosted {
+  display: flex !important;
+  align-items: center;
+  /* The Flex SDK pins the mount container to a fixed width via an ID selector;
+     force it back to full width (and border-box) so the 16-digit number is not
+     clipped. */
+  box-sizing: border-box !important;
+  width: 100% !important;
+  height: 2.7rem !important;
+  background: #fff !important;
+  border: 1px solid #ccced3 !important;
+  border-radius: 0.375rem !important;
+}
+
+.cybersource-rest-card .cc-hosted iframe {
+  width: 100%;
+  height: 1.7rem;
+  border: 0;
+}
+
+.cybersource-rest-card .cc-input:focus {
+  outline: none;
+}
+
+.cybersource-rest-card .cc-input:focus-visible {
+  outline: none;
+  border-color: #86b7fe;
+  box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.18);
+}
+
+/* Leave room for the brand badge on the card-number field. */
+.cybersource-rest-card .cc-field--number .cc-input,
+.cybersource-rest-card .cc-field--number .cc-hosted {
+  padding-left: 3.4rem;
+}
+
+.cybersource-rest-card .cc-brand {
+  position: absolute;
+  left: 0.6rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2.3rem;
+  height: 1.5rem;
+  background: url("../images/cards/generic.png") center / contain no-repeat;
+  pointer-events: none;
+}
+
+.cybersource-rest-card .cc-brand.visa { background-image: url("../images/cards/visa.png"); }
+.cybersource-rest-card .cc-brand.mastercard { background-image: url("../images/cards/mastercard.png"); }
+.cybersource-rest-card .cc-brand.maestro { background-image: url("../images/cards/maestro.png"); }
+.cybersource-rest-card .cc-brand.amex { background-image: url("../images/cards/amex.png"); }
+.cybersource-rest-card .cc-brand.discover { background-image: url("../images/cards/discover.png"); }
+.cybersource-rest-card .cc-brand.dinersclub { background-image: url("../images/cards/diners_club.png"); }
+.cybersource-rest-card .cc-brand.jcb { background-image: url("../images/cards/jcb.png"); }
+
+.cybersource-rest-card .cc-status {
+  position: absolute;
+  right: 0.6rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1.15rem;
+  height: 1.15rem;
+  background-color: #c9c9c2;
+  -webkit-mask: url("../images/tick.svg") center / contain no-repeat;
+  mask: url("../images/tick.svg") center / contain no-repeat;
+  transition: background-color 0.12s ease;
+}
+
+.cybersource-rest-card .cc-status.valid {
+  width: 1.55rem;
+  height: 1.55rem;
+  background-color: #1a7f37;
+  -webkit-mask-image: url("../images/tick-bold.svg");
+  mask-image: url("../images/tick-bold.svg");
+}
+
+.cybersource-rest-card .cc-status.invalid {
+  background-color: #b3261e;
+  -webkit-mask-image: url("../images/cross.svg");
+  mask-image: url("../images/cross.svg");
+}
+
+.cybersource-rest-card .cc-status.unsupported {
+  width: 1.4rem;
+  height: 1.4rem;
+  background-color: transparent;
+  -webkit-mask: none;
+  mask: none;
+  background-image: url("../images/stop.png");
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+
+/* Expiry + CVV share one full-width row. */
+.cybersource-rest-card .cc-row {
+  display: flex;
+  gap: 1rem;
+}
+
+.cybersource-rest-card .cc-field--expiry {
+  flex: 1 1 60%;
+}
+
+.cybersource-rest-card .cc-field--cvc {
+  flex: 1 1 40%;
+}
+
+.cybersource-rest-card .cc-error {
+  min-height: 1.1rem;
+  margin: 0.1rem 0 0;
+  font-size: 0.85rem;
+  color: #b3261e;
+}
+
+.cybersource-rest-card .cc-secure {
+  margin: 0.6rem 0 0;
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
+.cybersource-rest-card .cc-secure::before {
+  content: "🔒";
+  margin-right: 0.35rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cybersource-rest-card .cc-status {
+    transition: none;
+  }
+}

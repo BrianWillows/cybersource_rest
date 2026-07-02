@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ruleset name="cybersource_rest">
+  <description>Drupal and DrupalPractice coding standards for cybersource_rest.</description>
+  <file>.</file>
+  <!-- JavaScript is linted by ESLint (Drupal.org CI eslint job), NOT phpcs:
+       the Drupal PHP standard mis-applies its uppercase-constant rule to JS, and
+       phpcbf would rewrite null/true/false to NULL/TRUE/FALSE (broken JS). -->
+  <arg name="extensions" value="php,module,install,inc,yml,twig,css"/>
+  <arg name="colors"/>
+  <arg value="sp"/>
+  <rule ref="Drupal"/>
+  <rule ref="DrupalPractice"/>
+</ruleset>

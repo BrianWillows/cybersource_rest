@@ -1,0 +1,18 @@
+services:
+  logger.channel.cybersource_rest:
+    parent: logger.channel_base
+    arguments: ['cybersource_rest']
+
+  cybersource_rest.credentials:
+    class: Drupal\cybersource_rest\CredentialProvider
+    arguments: ['@logger.channel.cybersource_rest', '@file_system']
+
+  cybersource_rest.api_client:
+    class: Drupal\cybersource_rest\CybersourceApiClient
+    arguments: ['@cybersource_rest.credentials', '@logger.channel.cybersource_rest']
+
+  cybersource_rest.credentials_check_subscriber:
+    class: Drupal\cybersource_rest\EventSubscriber\CredentialsCheckSubscriber
+    arguments: ['@router.admin_context', '@current_user', '@entity_type.manager', '@cybersource_rest.credentials', '@messenger']
+    tags:
+      - { name: event_subscriber }

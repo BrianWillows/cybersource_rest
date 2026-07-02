@@ -1,0 +1,44 @@
+<?php
+
+/**
+ * @file
+ * Hooks for the Cybersource REST / Microform module.
+ */
+
+declare(strict_types=1);
+
+use Drupal\Core\Routing\RouteMatchInterface;
+use Drupal\Core\StringTranslation\TranslatableMarkup;
+use Drupal\cybersource_rest\CredentialProvider;
+
+/**
+ * Implements hook_help().
+ */
+function cybersource_rest_help(string $route_name, RouteMatchInterface $route_match): string {
+  if ($route_name !== 'help.page.cybersource_rest') {
+    return '';
+  }
+  return '<p>' . t('Cybersource REST / Flex Microform v2 payment gateway for Drupal Commerce. Card data is captured in Cybersource-hosted Microform iframes (the PAN/CVV never reach this server) and charged server-side via the Cybersource REST API. API credentials live in a private file, not in site configuration. See the module README for setup and the PCI scope caveat.') . '</p>';
+}
+
+/**
+ * Builds the actionable "credentials missing or invalid" message.
+ *
+ * Shared by hook_requirements() (status report) and the admin warning subscriber
+ * so both show identical text.
+ *
+ * @param string $reason
+ *   The underlying reason (e.g. an exception message).
+ *
+ * @return \Drupal\Core\StringTranslation\TranslatableMarkup
+ *   The translated, marked-up message.
+ */
+function cybersource_rest_credentials_error_message(string $reason): TranslatableMarkup {
+  $private = \Drupal::service('file_system')->realpath('private://');
+  $path = ($private ?: '<private files>') . '/keys/cybersource_rest.yml';
+  return t('The Cybersource REST credentials file is missing or could not be read (@msg). Create it at <span style="white-space:nowrap">%uri</span> — on this server that is the file <span style="white-space:nowrap">%path</span> — readable by the web server user only (e.g. chmod 640). Copy the module\'s cybersource_rest.credentials.example.yml as a starting point and fill in your merchant_id, key_id and shared_secret.', [
+    '@msg' => $reason,
+    '%uri' => CredentialProvider::CREDENTIALS_URI,
+    '%path' => $path,
+  ]);
+}
