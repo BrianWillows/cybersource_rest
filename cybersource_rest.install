@@ -87,7 +87,7 @@ function cybersource_rest_requirements(string $phase): array {
     $requirements['cybersource_rest_creds'] = [
       'title' => t('Cybersource REST: credentials'),
       'value' => t('Missing or invalid — payments cannot be taken'),
-      'description' => cybersource_rest_credentials_error_message($e->getMessage()),
+      'description' => \Drupal::service('cybersource_rest.credentials_status')->credentialsErrorMessage($e->getMessage()),
       'severity' => REQUIREMENT_ERROR,
     ];
   }

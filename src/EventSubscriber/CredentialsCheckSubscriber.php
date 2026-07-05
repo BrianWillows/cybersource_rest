@@ -8,7 +8,9 @@ use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Messenger\MessengerInterface;
 use Drupal\Core\Routing\AdminContext;
 use Drupal\Core\Session\AccountInterface;
+use Drupal\Core\StringTranslation\StringTranslationTrait;
 use Drupal\cybersource_rest\CredentialProvider;
+use Drupal\cybersource_rest\CredentialsStatus;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 use Symfony\Component\HttpKernel\Event\RequestEvent;
 use Symfony\Component\HttpKernel\KernelEvents;
@@ -22,12 +24,15 @@ use Symfony\Component\HttpKernel\KernelEvents;
  */
 final class CredentialsCheckSubscriber implements EventSubscriberInterface {
 
+  use StringTranslationTrait;
+
   public function __construct(
     protected AdminContext $adminContext,
     protected AccountInterface $currentUser,
     protected EntityTypeManagerInterface $entityTypeManager,
     protected CredentialProvider $credentials,
     protected MessengerInterface $messenger,
+    protected CredentialsStatus $credentialsStatus,
   ) {}
 
   /**
@@ -63,11 +68,11 @@ final class CredentialsCheckSubscriber implements EventSubscriberInterface {
       $this->credentials->load();
       // A loadable file with no complete profile is still unusable.
       if (!$this->credentials->configuredModes()) {
-        $this->messenger->addError(cybersource_rest_credentials_error_message((string) t('no complete test or live profile')));
+        $this->messenger->addError($this->credentialsStatus->credentialsErrorMessage((string) $this->t('no complete test or live profile')));
       }
     }
     catch (\Throwable $e) {
-      $this->messenger->addError(cybersource_rest_credentials_error_message($e->getMessage()));
+      $this->messenger->addError($this->credentialsStatus->credentialsErrorMessage($e->getMessage()));
     }
   }
 
