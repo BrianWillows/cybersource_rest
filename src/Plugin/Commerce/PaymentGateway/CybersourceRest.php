@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Drupal\cybersource_rest\Plugin\Commerce\PaymentGateway;
 
 use Drupal\commerce_order\Entity\OrderInterface;
+use Drupal\commerce_payment\Attribute\CommercePaymentGateway;
 use Drupal\commerce_payment\CreditCard;
 use Drupal\commerce_payment\Entity\PaymentInterface;
 use Drupal\commerce_payment\Entity\PaymentMethodInterface;
@@ -15,9 +16,11 @@ use Drupal\commerce_payment\Plugin\Commerce\PaymentGateway\OnsitePaymentGatewayB
 use Drupal\commerce_log\LogStorageInterface;
 use Drupal\commerce_price\Price;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\StringTranslation\TranslatableMarkup;
 use Drupal\cybersource_rest\CredentialProvider;
 use Drupal\cybersource_rest\CybersourceApiClientInterface;
 use Drupal\cybersource_rest\Exception\CybersourceApiException;
+use Drupal\cybersource_rest\PluginForm\CybersourceRestForm;
 use Drupal\cybersource_rest\TransientToken;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -34,22 +37,21 @@ use Symfony\Component\HttpFoundation\RequestStack;
  * config — they are resolved at runtime, by mode, from a private .yml file (see
  * \Drupal\cybersource_rest\CredentialProvider), so secrets never enter config
  * exports or git.
- *
- * @CommercePaymentGateway(
- *   id = "cybersource_rest",
- *   label = "Cybersource (REST Microform)",
- *   display_label = "Credit / debit card",
- *   forms = {
- *     "add-payment-method" = "Drupal\cybersource_rest\PluginForm\CybersourceRestForm",
- *   },
- *   js_library = "cybersource_rest/form",
- *   payment_method_types = {"cybersource_rest_credit_card"},
- *   credit_card_types = {
- *     "amex", "dinersclub", "discover", "jcb", "maestro", "mastercard", "visa",
- *   },
- *   requires_billing_information = TRUE,
- * )
  */
+#[CommercePaymentGateway(
+  id: 'cybersource_rest',
+  label: new TranslatableMarkup('Cybersource (REST Microform)'),
+  display_label: new TranslatableMarkup('Credit / debit card'),
+  forms: [
+    'add-payment-method' => CybersourceRestForm::class,
+  ],
+  js_library: 'cybersource_rest/form',
+  payment_method_types: ['cybersource_rest_credit_card'],
+  credit_card_types: [
+    'amex', 'dinersclub', 'discover', 'jcb', 'maestro', 'mastercard', 'visa',
+  ],
+  requires_billing_information: TRUE,
+)]
 class CybersourceRest extends OnsitePaymentGatewayBase implements CybersourceRestInterface {
 
   /**

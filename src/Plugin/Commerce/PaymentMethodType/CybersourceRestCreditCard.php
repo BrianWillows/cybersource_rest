@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Drupal\cybersource_rest\Plugin\Commerce\PaymentMethodType;
 
+use Drupal\commerce_payment\Attribute\CommercePaymentMethodType;
 use Drupal\commerce_payment\Plugin\Commerce\PaymentMethodType\CreditCard;
+use Drupal\Core\StringTranslation\TranslatableMarkup;
 use Drupal\entity\BundleFieldDefinition;
 
 /**
@@ -13,12 +15,11 @@ use Drupal\entity\BundleFieldDefinition;
  * Adds a `transient_token` field that holds the single-use Microform JWT until
  * the payment is created. The token is never reusable; this gateway charges it
  * once and does not (yet) exchange it for a permanent Token Management instrument.
- *
- * @CommercePaymentMethodType(
- *   id = "cybersource_rest_credit_card",
- *   label = @Translation("Credit card (Cybersource Microform)"),
- * )
  */
+#[CommercePaymentMethodType(
+  id: 'cybersource_rest_credit_card',
+  label: new TranslatableMarkup('Credit card (Cybersource Microform)'),
+)]
 class CybersourceRestCreditCard extends CreditCard {
 
   /**
