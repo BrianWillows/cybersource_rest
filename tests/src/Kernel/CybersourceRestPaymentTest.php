@@ -22,7 +22,8 @@ use Drupal\Tests\commerce_order\Kernel\OrderKernelTestBase;
 /**
  * Tests the Cybersource REST gateway's create/charge logic with a mocked API.
  *
- * The REST SDK is wrapped behind CybersourceApiClientInterface, so the gateway's
+ * The REST SDK is wrapped behind CybersourceApiClientInterface, so the
+ * gateway's
  * decision logic can be tested without any network access by swapping in a mock
  * client — the architectural win over newing-up SDK classes inline.
  *
