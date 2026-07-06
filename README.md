@@ -75,6 +75,69 @@ typically qualifies for a **reduced PCI scope (SAQ A / A-EP depending on your
 acquirer)**. A checkout **Content-Security-Policy** is still required. Confirm
 your exact scope with your acquirer or QSA.
 
+## 3-D Secure / Payer Authentication (SCA)
+
+Tick **Enable 3-D Secure (Payer Authentication)** on the gateway to
+authenticate the cardholder before every charge — required for Strong Customer
+Authentication (UK/EEA PSD2), and it shifts fraud liability to the issuer for
+authenticated transactions.
+
+How it works (EMV 3DS 2.x via Cybersource Payer Authentication, which has
+Cardinal Commerce built in — no separate Cardinal account is needed):
+
+1. After the card is tokenised, the checkout JS asks this site to run the
+   payer-auth **setup** and then performs Cardinal **device data collection**
+   in a hidden iframe.
+2. The site runs the **enrollment check** server-side (amount, currency and
+   billing come from the order, never from the browser).
+   - **Frictionless** outcome: the authentication data (CAVV/ECI) is kept
+     server-side and carried straight into the authorization.
+   - **Challenge** outcome: the issuer's challenge opens in a modal iframe;
+     after the customer completes it, the authorization validates the result
+     server-to-server (`VALIDATE_CONSUMER_AUTHENTICATION`).
+   - **Unavailable**: the payment proceeds without a liability shift (standard
+     scheme behaviour); the outcome is recorded in the order's activity log.
+   - **Failed**: the payment is refused.
+3. **Fail closed**: with 3-D Secure enabled, a payment request that skipped or
+   tampered with the authentication steps is refused before any charge is
+   attempted. The authentication result is single-use and session-bound.
+
+**Prerequisites:** Payer Authentication must be enabled ("boarded") on your
+Cybersource merchant account (Business Center; raise a ticket with Cybersource
+support if `/risk/v1/authentication-setups` returns a configuration error).
+Card payments will fail while 3-D Secure is ticked without it — test against
+the sandbox first.
+
+### Testing 3-D Secure in the Cybersource sandbox
+
+Test scenarios are selected by **card number** (any CVV; expiry = January of
+the current year + 3). With a test-mode gateway and 3-D Secure enabled:
+
+| Scenario | Visa | Mastercard | Expected result |
+|---|---|---|---|
+| Frictionless success | `4000000000002701` | `5200000000002235` | `AUTHENTICATION_SUCCESSFUL`, `paresStatus=Y`, CAVV issued; payment authorized with liability shift |
+| Frictionless failed | `4000000000002925` | `5200000000002276` | `AUTHENTICATION_FAILED`, `paresStatus=N`; checkout shows "your bank could not authenticate", no charge |
+| Authentication unavailable | `4000000000002313` | `5200000000002268` | `paresStatus=U`, no CAVV; payment proceeds **without liability shift** (logged) |
+| Challenge, then success | `4000000000002503` | `5200000000002151` | `PENDING_AUTHENTICATION`, `paresStatus=C`; the challenge modal opens, complete it, payment authorized |
+| Challenge, then failed | `4000000000002370` | `5200000000002490` | Challenge completes but validation fails; no charge |
+
+The enrollment outcome for every attempt is written to the order's activity
+log (`3DS enrollment: status=… paresStatus=… veresEnrolled=…`), so each
+scenario can be verified from the order page.
+
+Exemption testing (PSD2 TRA / low-value etc.): Cybersource exposes SCA
+exemption flags under `consumerAuthenticationInformation.strongAuthentication`
+in the authorization API — send at most ONE exemption per transaction or
+Cybersource rejects it. This module does not yet request exemptions; see the
+Cybersource "Payer Authentication" guide, "Additional Test Cases", if you need
+them (e.g. TRA/low-value Visa test card `4000000000002024` with
+`challengeCode=05`).
+
+An end-to-end Playwright test for the frictionless flow ships in
+`tests/playwright/payer-auth-checkout.spec.ts` (run against a dev site with
+sample products, a test-mode gateway with 3-D Secure enabled, and Payer
+Authentication boarded on the sandbox account).
+
 ## Scope / roadmap
 
 This first version mirrors the Secure Acceptance gateway: a single payment per
@@ -83,9 +146,6 @@ resulting transaction.
 
 **Not yet implemented:**
 
-- **3-D Secure / Payer Authentication (SCA)** — the priority next addition.
-  Until it is available and approved by your acquirer, this gateway should not be
-  used for live UK/EEA card payments.
 - **Saving cards** via Token Management (TMS) — each checkout uses a single-use
   transient token only.
 - **Timeout reconciliation / idempotency** — if a payment request gets no
