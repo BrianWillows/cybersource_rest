@@ -1,0 +1,57 @@
+
+Apim
+authorisation
+authorised
+behaviour
+# British-English spellings used in comments and docblocks.
+canonicalisation
+canonicalise
+# Coined / technical terms used in code and comments.
+colour
+creds
+csop
+# Cybersource / Secure Acceptance domain terms.
+defence
+dinersclub
+domcontentloaded
+fulfilment
+graith
+hara
+JWE
+JWS
+lalit
+licence
+luhn
+magecart
+# Matching is case-insensitive.
+microform
+Microform
+mmyy
+narendra
+neutralises
+nums
+# One word per line; blank lines and lines starting with "#" are ignored.
+# Project dictionary for the cybersource_sop CSpell CI job.
+ptsv
+recognised
+repoint
+repointed
+repoints
+retriable
+sandeep
+secureacceptance
+# Security / web terms.
+serialise
+subresource
+testaccess
+# Test fixtures and proper names appearing in comments/tests/credits.
+testprofile
+testsecureacceptance
+tokenise
+tokenises
+tokenising
+topsecret
+unconfigured
+unparseable
+unslashed
+unticked

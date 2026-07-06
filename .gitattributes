@@ -1,0 +1,5 @@
+# Keep development-only files out of drupal.org release packages.
+# (phpcs.xml.dist and .editorconfig DO ship — CI and contributors use them.)
+/.gitignore       export-ignore
+/.gitattributes   export-ignore
+/tests/playwright export-ignore

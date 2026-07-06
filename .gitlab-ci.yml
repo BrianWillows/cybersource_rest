@@ -1,0 +1,21 @@
+# Drupal.org GitLab CI for cybersource_rest.
+#
+# Uses Drupal's shared CI templates, which run (per supported core version):
+# composer validate, PHPCS (Drupal + DrupalPractice), PHPStan, PHPUnit, and
+# deprecation checks. See:
+# https://www.drupal.org/docs/develop/git/using-gitlab-to-contribute-to-drupal
+include:
+  - project: $_GITLAB_TEMPLATES_REPO
+    ref: $_GITLAB_TEMPLATES_REF
+    file:
+      - "/includes/include.drupalci.main.yml"
+      - "/includes/include.drupalci.variables.yml"
+      - "/includes/include.drupalci.workflows.yml"
+
+variables:
+  # PHPCS uses the project's phpcs.xml.dist (Drupal + DrupalPractice, with the
+  # JS/test-fixture exclusions). Do NOT set _PHPCS_EXTRA=--standard=... here:
+  # passing --standard on the command line makes phpcs ignore phpcs.xml.dist,
+  # which then lints js/cybersource-rest.js as PHP and reports false UpperCaseConstant errors.
+  # Run PHPStan at the project's level (phpstan.neon if present, else template default).
+  SKIP_PHPSTAN: "0"
