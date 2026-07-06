@@ -83,15 +83,16 @@ class CybersourceRestForm extends BasePaymentMethodAddForm {
       'supportedCardTypes' => $this->supportedCardTypes($plugin),
     ];
 
-    // The only value posted back to the server: the transient token (set by JS).
+    // The only value posted back to the server: the transient token (set by
+    // JS).
     $element['cybersource_token'] = [
       '#type' => 'hidden',
       '#attributes' => ['class' => ['cybersource-rest-token']],
     ];
 
     // The polished card. PAN + CVV are mounted as Microform iframes by the JS
-    // into the #cybersource-card-number / #cybersource-card-cvv slots; the expiry
-    // is our own input (read client-side when tokenising).
+    // into the #cybersource-card-number / #cybersource-card-cvv slots; the
+    // expiry is our own input (read client-side when tokenising).
     $element['card'] = [
       '#type' => 'inline_template',
       '#template' => <<<'TWIG'
@@ -166,8 +167,8 @@ class CybersourceRestForm extends BasePaymentMethodAddForm {
    * @phpstan-param array<string, mixed> $element
    */
   protected function submitCreditCardForm(array $element, FormStateInterface $form_state): void {
-    // Nothing to do: the transient token (in cybersource_token) carries the card
-    // metadata and is handled by the gateway's createPaymentMethod().
+    // Nothing to do: the transient token (in cybersource_token) carries the
+    // card metadata and is handled by the gateway's createPaymentMethod().
   }
 
   /**
@@ -191,9 +192,9 @@ class CybersourceRestForm extends BasePaymentMethodAddForm {
     }
     // Fail closed: the third-party script we inject must be served over HTTPS
     // from a Cybersource host, and must carry a Subresource Integrity hash. A
-    // capture context that fails either check is treated as unusable (the form's
-    // caller shows the "temporarily unavailable" message) rather than loading an
-    // untrusted or unverifiable script into the checkout page.
+    // capture context that fails either check is treated as unusable (the
+    // form's caller shows the "temporarily unavailable" message) rather than
+    // loading an untrusted or unverifiable script into the checkout page.
     $url = (string) $data['clientLibrary'];
     $parsed = parse_url($url);
     $host = strtolower((string) ($parsed['host'] ?? ''));

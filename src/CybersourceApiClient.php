@@ -132,7 +132,8 @@ final class CybersourceApiClient implements CybersourceApiClientInterface {
   /**
    * Upgrade clientReferenceInformation from a plain array to its SDK model.
    *
-   * The SDK's SdkTracker calls $request->getClientReferenceInformation()->getPartner()
+   * The SDK's SdkTracker calls
+   * $request->getClientReferenceInformation()->getPartner()
    * to inject a developer id before the request is sent, so this one sub-object
    * must be a real model (with getPartner()/setPartner()) rather than the plain
    * array we build everywhere else. The remaining sub-arrays are serialised

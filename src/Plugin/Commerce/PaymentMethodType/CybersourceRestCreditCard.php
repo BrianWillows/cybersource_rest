@@ -14,7 +14,8 @@ use Drupal\entity\BundleFieldDefinition;
  *
  * Adds a `transient_token` field that holds the single-use Microform JWT until
  * the payment is created. The token is never reusable; this gateway charges it
- * once and does not (yet) exchange it for a permanent Token Management instrument.
+ * once and does not (yet) exchange it for a permanent Token Management
+ * instrument.
  */
 #[CommercePaymentMethodType(
   id: 'cybersource_rest_credit_card',
@@ -29,8 +30,8 @@ class CybersourceRestCreditCard extends CreditCard {
     $fields = parent::buildFieldDefinitions();
 
     $fields['transient_token'] = BundleFieldDefinition::create('string_long')
-      ->setLabel(t('Transient token'))
-      ->setDescription(t('The single-use Cybersource Flex Microform transient token (JWT) used to charge this card.'))
+      ->setLabel($this->t('Transient token'))
+      ->setDescription($this->t('The single-use Cybersource Flex Microform transient token (JWT) used to charge this card.'))
       ->setDefaultValue('');
 
     return $fields;

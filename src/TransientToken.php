@@ -16,7 +16,8 @@ namespace Drupal\cybersource_rest;
  * SECURITY: we deliberately do NOT treat the decoded payload as trusted. The
  * authoritative validation of the token happens at Cybersource when the payment
  * is created (a tampered/expired token is rejected there), and the charged
- * amount/currency come from the order, never from the token. So these fields are
+ * amount/currency come from the order, never from the token. So these fields
+ * are
  * used for display only and never drive an authorization or amount decision.
  */
 final class TransientToken {

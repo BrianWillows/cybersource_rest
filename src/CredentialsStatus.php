@@ -138,7 +138,10 @@ final class CredentialsStatus {
         if (!$when) {
           // Unparseable date: tell the operator rather than silently ignore
           // it.
-          $expiring[] = $this->t('@label (unreadable date "@date" — use YYYY-MM-DD)', ['@label' => $label, '@date' => $date]);
+          $expiring[] = $this->t('@label (unreadable date "@date" — use YYYY-MM-DD)', [
+            '@label' => $label,
+            '@date' => $date,
+          ]);
           continue;
         }
         if ($when < $today) {

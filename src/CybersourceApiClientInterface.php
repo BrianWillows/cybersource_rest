@@ -14,7 +14,8 @@ use CyberSource\Model\PtsV2PaymentsVoidsPost201Response;
  *
  * Centralises HTTP-Signature authentication, host selection (test vs live) and
  * error translation so the payment gateway plugin depends on this contract
- * rather than newing-up SDK API classes inline. Requests are built by the caller
+ * rather than newing-up SDK API classes inline. Requests are built by the
+ * caller
  * as nested arrays using Cybersource's own JSON field names; the SDK serialises
  * them as-is.
  *
@@ -30,7 +31,8 @@ interface CybersourceApiClientInterface {
    * @param string $mode
    *   The gateway mode: 'test' or 'live'.
    * @param array<string, mixed> $request
-   *   The GenerateCaptureContextRequest body (targetOrigins, allowedCardNetworks,
+   *   The GenerateCaptureContextRequest body (targetOrigins,
+   *   allowedCardNetworks,
    *   clientVersion).
    *
    * @return string

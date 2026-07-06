@@ -7,7 +7,8 @@ namespace Drupal\cybersource_rest\Exception;
 /**
  * Wraps a failed Cybersource REST API call (transport / HTTP error).
  *
- * Decouples the gateway from the SDK's own \CyberSource\ApiException and carries
+ * Decouples the gateway from the SDK's own \CyberSource\ApiException and
+ * carries
  * the parsed reason/message so callers can log and map to a Commerce exception
  * without re-parsing the SDK response body.
  */

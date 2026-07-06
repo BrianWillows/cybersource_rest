@@ -28,10 +28,18 @@
   background: center / contain no-repeat;
 }
 
-.cybersource-rest-card .cc-accepted-icon.visa { background-image: url("../images/cards/visa.png"); }
-.cybersource-rest-card .cc-accepted-icon.mastercard { background-image: url("../images/cards/mastercard.png"); }
-.cybersource-rest-card .cc-accepted-icon.maestro { background-image: url("../images/cards/maestro.png"); }
-.cybersource-rest-card .cc-accepted-icon.amex { background-image: url("../images/cards/amex.png"); }
+.cybersource-rest-card .cc-accepted-icon.visa {
+  background-image: url("../images/cards/visa.png");
+}
+.cybersource-rest-card .cc-accepted-icon.mastercard {
+  background-image: url("../images/cards/mastercard.png");
+}
+.cybersource-rest-card .cc-accepted-icon.maestro {
+  background-image: url("../images/cards/maestro.png");
+}
+.cybersource-rest-card .cc-accepted-icon.amex {
+  background-image: url("../images/cards/amex.png");
+}
 
 .cybersource-rest-card .cc-field {
   margin-bottom: 1rem;
@@ -115,13 +123,27 @@
   pointer-events: none;
 }
 
-.cybersource-rest-card .cc-brand.visa { background-image: url("../images/cards/visa.png"); }
-.cybersource-rest-card .cc-brand.mastercard { background-image: url("../images/cards/mastercard.png"); }
-.cybersource-rest-card .cc-brand.maestro { background-image: url("../images/cards/maestro.png"); }
-.cybersource-rest-card .cc-brand.amex { background-image: url("../images/cards/amex.png"); }
-.cybersource-rest-card .cc-brand.discover { background-image: url("../images/cards/discover.png"); }
-.cybersource-rest-card .cc-brand.dinersclub { background-image: url("../images/cards/diners_club.png"); }
-.cybersource-rest-card .cc-brand.jcb { background-image: url("../images/cards/jcb.png"); }
+.cybersource-rest-card .cc-brand.visa {
+  background-image: url("../images/cards/visa.png");
+}
+.cybersource-rest-card .cc-brand.mastercard {
+  background-image: url("../images/cards/mastercard.png");
+}
+.cybersource-rest-card .cc-brand.maestro {
+  background-image: url("../images/cards/maestro.png");
+}
+.cybersource-rest-card .cc-brand.amex {
+  background-image: url("../images/cards/amex.png");
+}
+.cybersource-rest-card .cc-brand.discover {
+  background-image: url("../images/cards/discover.png");
+}
+.cybersource-rest-card .cc-brand.dinersclub {
+  background-image: url("../images/cards/diners_club.png");
+}
+.cybersource-rest-card .cc-brand.jcb {
+  background-image: url("../images/cards/jcb.png");
+}
 
 .cybersource-rest-card .cc-status {
   position: absolute;

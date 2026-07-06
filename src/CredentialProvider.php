@@ -15,7 +15,8 @@ use Symfony\Component\Yaml\Yaml;
  * git / config exports) AND the file location is hardcoded — it is NOT
  * configurable. A configurable path would let an attacker with admin rights
  * point the gateway at credentials they control. The file always lives at
- * private://keys/cybersource_rest.yml (the private filesystem, outside docroot).
+ * private://keys/cybersource_rest.yml (the private filesystem, outside the
+ * docroot).
  *
  * The file holds one block per mode (`test`, `live`); each block carries the
  * three HTTP-Signature credentials: merchant_id, key_id (the keyId / Serial
@@ -194,7 +195,8 @@ final class CredentialProvider {
   /**
    * Optional key-expiry dates per mode.
    *
-   * Operators may copy a REST API key's expiry / rotation date from the Business
+   * Operators may copy a REST API key's expiry / rotation date from the
+   * Business
    * Center into an optional `key_expiry` field (YYYY-MM-DD). Used only for the
    * status-report reminder; never required for authentication.
    *
