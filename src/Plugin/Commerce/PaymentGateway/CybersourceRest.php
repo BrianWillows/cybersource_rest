@@ -148,8 +148,9 @@ class CybersourceRest extends OnsitePaymentGatewayBase implements CybersourceRes
   public function buildConfigurationForm(array $form, FormStateInterface $form_state): array {
     $form = parent::buildConfigurationForm($form, $form_state);
 
-    // Credentials are read from a FIXED private file (private://keys/cybersource_rest.yml)
-    // and are deliberately NOT configurable here — a configurable path would let
+    // Credentials are read from a FIXED private file
+    // (private://keys/cybersource_rest.yml) and are deliberately NOT
+    // configurable here — a configurable path would let
     // an admin point the gateway at attacker-controlled credentials. This panel
     // only reports whether that file is present and which modes it covers.
     $form['credentials_status'] = [
@@ -246,7 +247,8 @@ class CybersourceRest extends OnsitePaymentGatewayBase implements CybersourceRes
       throw new InvalidRequestException('The Cybersource transient token is malformed.', 0, $e);
     }
 
-    // Display metadata only (the charge is validated by Cybersource): brand from
+    // Display metadata only (the charge is validated by Cybersource): brand
+    // from
     // the BIN, masked number, and the expiry Cybersource echoed into the token
     // from the customer's entry.
     $payment_method->set('card_type', $this->cardTypeFromBin($token->bin));
@@ -276,7 +278,8 @@ class CybersourceRest extends OnsitePaymentGatewayBase implements CybersourceRes
    *
    * The $capture argument is ignored: whether funds are captured is governed by
    * the gateway's "transaction_type" setting (sale = capture, authorization =
-   * authorize only), so the behaviour cannot drift from what the merchant chose.
+   * authorize only), so the behaviour cannot drift from what the merchant
+   * chose.
    */
   public function createPayment(PaymentInterface $payment, $capture = TRUE): void {
     $this->assertPaymentState($payment, ['new']);
@@ -336,7 +339,8 @@ class CybersourceRest extends OnsitePaymentGatewayBase implements CybersourceRes
     $remote_id = (string) $response->getId();
     $this->logResponse($order, sprintf('mode=%s status=%s transaction_id=%s', $this->getMode(), $status, $remote_id));
 
-    // Only a clean AUTHORIZED is a final success. AUTHORIZED_PENDING_REVIEW means
+    // Only a clean AUTHORIZED is a final success. AUTHORIZED_PENDING_REVIEW
+    // means
     // Decision Manager is still reviewing: accept it but HOLD it as a pending
     // authorization — never auto-complete a sale that is still under review.
     $review = $status === 'AUTHORIZED_PENDING_REVIEW';
@@ -390,6 +394,7 @@ class CybersourceRest extends OnsitePaymentGatewayBase implements CybersourceRes
     if (!in_array($status, ['PENDING', 'TRANSMITTED'], TRUE)) {
       $this->throwForStatus($status, $response);
     }
+    $this->logResponse($payment->getOrder(), sprintf('capture %s %s status=%s transaction_id=%s', $amount->getNumber(), $amount->getCurrencyCode(), $status, (string) $payment->getRemoteId()));
     $payment->setState('completed');
     $payment->setAmount($amount);
     $payment->save();
@@ -414,6 +419,7 @@ class CybersourceRest extends OnsitePaymentGatewayBase implements CybersourceRes
     if (!in_array($status, ['VOIDED', 'PENDING', 'TRANSMITTED'], TRUE)) {
       $this->throwForStatus($status, $response);
     }
+    $this->logResponse($order, sprintf('void status=%s transaction_id=%s', $status, (string) $payment->getRemoteId()));
     $payment->setState('authorization_voided');
     $payment->save();
   }
@@ -439,12 +445,14 @@ class CybersourceRest extends OnsitePaymentGatewayBase implements CybersourceRes
     catch (CybersourceApiException $e) {
       throw new PaymentGatewayException($e->getMessage(), 0, $e);
     }
-    // Confirm Cybersource accepted the refund (it settles asynchronously) before
+    // Confirm Cybersource accepted the refund (it settles asynchronously)
+    // before
     // recording the money as refunded.
     $status = strtoupper((string) $response->getStatus());
     if (!in_array($status, ['PENDING', 'TRANSMITTED'], TRUE)) {
       $this->throwForStatus($status, $response);
     }
+    $this->logResponse($payment->getOrder(), sprintf('refund %s %s status=%s transaction_id=%s', $amount->getNumber(), $amount->getCurrencyCode(), $status, (string) $payment->getRemoteId()));
 
     $old_refunded = $payment->getRefundedAmount();
     $new_refunded = $old_refunded->add($amount);
@@ -597,7 +605,8 @@ class CybersourceRest extends OnsitePaymentGatewayBase implements CybersourceRes
    * @param string $label
    *   What is being logged.
    * @param array<string, mixed> $data
-   *   The payload (may contain billing PII; only logged when explicitly enabled).
+   *   The payload (may contain billing PII; only logged when explicitly
+   *   enabled).
    */
   protected function maybeLogApi(string $label, array $data): void {
     if (empty($this->configuration['log_api_calls'])) {
