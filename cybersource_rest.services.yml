@@ -9,7 +9,12 @@ services:
 
   cybersource_rest.credentials_status:
     class: Drupal\cybersource_rest\CredentialsStatus
-    arguments: ['@file_system']
+    arguments: ['@file_system', '@cybersource_rest.credentials', '@entity_type.manager']
+
+  # Class alias so the autowired hook class (Drupal 11.1+ registers
+  # #[Hook] classes as services) can receive CredentialsStatus by type.
+  Drupal\cybersource_rest\CredentialsStatus:
+    alias: cybersource_rest.credentials_status
 
   cybersource_rest.api_client:
     class: Drupal\cybersource_rest\CybersourceApiClient
