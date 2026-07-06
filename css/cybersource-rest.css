@@ -221,3 +221,29 @@
     transition: none;
   }
 }
+
+/* 3-D Secure challenge modal. */
+.cybersource-pa-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.cybersource-pa-window {
+  max-width: 95vw;
+  max-height: 95vh;
+  overflow: auto;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.4);
+}
+
+.cybersource-pa-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+}

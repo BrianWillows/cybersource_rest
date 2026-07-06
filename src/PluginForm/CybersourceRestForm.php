@@ -4,11 +4,20 @@ declare(strict_types=1);
 
 namespace Drupal\cybersource_rest\PluginForm;
 
+use Drupal\commerce\InlineFormManager;
+use Drupal\commerce_order\Entity\OrderInterface;
 use Drupal\commerce_payment\PluginForm\PaymentMethodAddForm as BasePaymentMethodAddForm;
+use Drupal\commerce_store\CurrentStoreInterface;
 use Drupal\Core\Cache\CacheableMetadata;
+use Drupal\Core\DependencyInjection\ContainerInjectionInterface;
+use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Logger\LoggerChannelTrait;
 use Drupal\Core\Messenger\MessengerTrait;
+use Drupal\Core\Routing\RouteMatchInterface;
+use Drupal\Core\Url;
+use Psr\Log\LoggerInterface;
+use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
  * Builds the Cybersource REST / Flex Microform "add payment method" form.
@@ -18,10 +27,49 @@ use Drupal\Core\Messenger\MessengerTrait;
  * own field. On submit the JS tokenises the card into a single-use transient
  * token and writes it to the hidden field this form posts back.
  */
-class CybersourceRestForm extends BasePaymentMethodAddForm {
+final class CybersourceRestForm extends BasePaymentMethodAddForm implements ContainerInjectionInterface {
 
   use LoggerChannelTrait;
   use MessengerTrait;
+
+  /**
+   * Constructs the form.
+   *
+   * @param \Drupal\commerce_store\CurrentStoreInterface $current_store
+   *   The current store.
+   * @param \Drupal\Core\Entity\EntityTypeManagerInterface $entity_type_manager
+   *   The entity type manager.
+   * @param \Drupal\commerce\InlineFormManager $inline_form_manager
+   *   The inline form manager.
+   * @param \Psr\Log\LoggerInterface $logger
+   *   The commerce_payment logger channel.
+   * @param \Drupal\Core\Routing\RouteMatchInterface $routeMatch
+   *   The route match — the checkout order (for the 3-D Secure endpoints)
+   *   comes from the checkout route, because the payment method entity being
+   *   built has no order yet.
+   */
+  public function __construct(
+    CurrentStoreInterface $current_store,
+    EntityTypeManagerInterface $entity_type_manager,
+    InlineFormManager $inline_form_manager,
+    LoggerInterface $logger,
+    protected RouteMatchInterface $routeMatch,
+  ) {
+    parent::__construct($current_store, $entity_type_manager, $inline_form_manager, $logger);
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public static function create(ContainerInterface $container): static {
+    return new static(
+      $container->get('commerce_store.current_store'),
+      $container->get('entity_type.manager'),
+      $container->get('plugin.manager.commerce_inline_form'),
+      $container->get('logger.channel.commerce_payment'),
+      $container->get('current_route_match'),
+    );
+  }
 
   /**
    * {@inheritdoc}
@@ -76,12 +124,42 @@ class CybersourceRestForm extends BasePaymentMethodAddForm {
 
     $element['#attributes']['class'][] = 'cybersource-rest-form';
     $element['#attached']['library'][] = 'cybersource_rest/form';
-    $element['#attached']['drupalSettings']['cybersourceRest'] = [
+    $settings = [
       'captureContext' => $capture_context,
       'clientLibrary' => $client_library['url'],
       'clientLibraryIntegrity' => $client_library['integrity'],
       'supportedCardTypes' => $this->supportedCardTypes($plugin),
+      'payerAuth' => FALSE,
     ];
+    if ($plugin->isPayerAuthEnabled()) {
+      // The entity being built is a (new) PaymentMethod, which has no order;
+      // in checkout the order is the checkout route's parameter. Outside a
+      // checkout route (no order) the 3DS endpoints cannot be offered — and
+      // the gateway will then refuse the charge (fail closed), which is
+      // correct: this gateway's tokens are single-use checkout instruments.
+      /** @var \Drupal\commerce_payment\Entity\PaymentMethodInterface $payment_method */
+      $payment_method = $this->entity;
+      $order = $this->routeMatch->getParameter('commerce_order');
+      $gateway = $payment_method->getPaymentGateway();
+      if ($order instanceof OrderInterface && $gateway) {
+        $route_params = [
+          'commerce_payment_gateway' => $gateway->id(),
+          'commerce_order' => $order->id(),
+        ];
+        $settings['payerAuth'] = TRUE;
+        // toString(TRUE) collects the URL cacheability instead of leaking it
+        // into the (AJAX) render context.
+        $settings['paSetupUrl'] = Url::fromRoute('cybersource_rest.payer_auth_setup', $route_params)->toString(TRUE)->getGeneratedUrl();
+        $settings['paEnrollUrl'] = Url::fromRoute('cybersource_rest.payer_auth_enroll', $route_params)->toString(TRUE)->getGeneratedUrl();
+        // The Cardinal origin the device-data-collection completion message
+        // arrives from (mode-specific); the JS ignores messages from anywhere
+        // else.
+        $settings['paDdcOrigin'] = $plugin->getMode() === 'live'
+          ? 'https://centinelapi.cardinalcommerce.com'
+          : 'https://centinelapistag.cardinalcommerce.com';
+      }
+    }
+    $element['#attached']['drupalSettings']['cybersourceRest'] = $settings;
 
     // The only value posted back to the server: the transient token (set by
     // JS).

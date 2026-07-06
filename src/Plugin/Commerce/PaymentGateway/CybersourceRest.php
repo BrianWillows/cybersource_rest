@@ -17,6 +17,8 @@ use Drupal\commerce_log\LogStorageInterface;
 use Drupal\commerce_price\Price;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
+use Drupal\Core\TempStore\PrivateTempStore;
+use Drupal\Core\Url;
 use Drupal\cybersource_rest\CredentialProvider;
 use Drupal\cybersource_rest\CybersourceApiClientInterface;
 use Drupal\cybersource_rest\Exception\CybersourceApiException;
@@ -90,6 +92,17 @@ class CybersourceRest extends OnsitePaymentGatewayBase implements CybersourceRes
   protected RequestStack $requestStack;
 
   /**
+   * The private tempstore for payer-authentication results.
+   *
+   * Session-bound on purpose: a 3-D Secure result belongs to the customer who
+   * authenticated, and it must never be readable or replayable from another
+   * session.
+   *
+   * @var \Drupal\Core\TempStore\PrivateTempStore
+   */
+  protected PrivateTempStore $paStore;
+
+  /**
    * Cybersource card-network names keyed by Commerce credit card type id.
    */
   protected const NETWORK_MAP = [
@@ -100,6 +113,21 @@ class CybersourceRest extends OnsitePaymentGatewayBase implements CybersourceRes
     'discover' => 'DISCOVER',
     'dinersclub' => 'DINERSCLUB',
     'jcb' => 'JCB',
+  ];
+
+  /**
+   * Cybersource numeric card-type codes keyed by Commerce credit card type id.
+   *
+   * Used for paymentInformation.card.type in the payer-auth enrollment check.
+   */
+  protected const TYPE_CODES = [
+    'visa' => '001',
+    'mastercard' => '002',
+    'amex' => '003',
+    'discover' => '004',
+    'dinersclub' => '005',
+    'jcb' => '007',
+    'maestro' => '042',
   ];
 
   /**
@@ -117,6 +145,9 @@ class CybersourceRest extends OnsitePaymentGatewayBase implements CybersourceRes
     $log_storage = $container->get('entity_type.manager')->getStorage('commerce_log');
     $instance->logStorage = $log_storage;
     $instance->requestStack = $container->get('request_stack');
+    /** @var \Drupal\Core\TempStore\PrivateTempStoreFactory $tempstore_factory */
+    $tempstore_factory = $container->get('tempstore.private');
+    $instance->paStore = $tempstore_factory->get('cybersource_rest');
     return $instance;
   }
 
@@ -128,6 +159,7 @@ class CybersourceRest extends OnsitePaymentGatewayBase implements CybersourceRes
   public function defaultConfiguration(): array {
     return [
       'transaction_type' => 'authorization',
+      'payer_auth' => FALSE,
       'log_api_calls' => FALSE,
     ] + parent::defaultConfiguration();
   }
@@ -176,6 +208,13 @@ class CybersourceRest extends OnsitePaymentGatewayBase implements CybersourceRes
       '#default_value' => $this->configuration['transaction_type'],
     ];
 
+    $form['payer_auth'] = [
+      '#type' => 'checkbox',
+      '#title' => $this->t('Enable 3-D Secure (Payer Authentication)'),
+      '#description' => $this->t('Authenticates the cardholder (frictionless or challenge) before the charge, as required for UK/EU Strong Customer Authentication, and shifts fraud liability to the issuer for authenticated transactions. Payer Authentication must be enabled ("boarded") on your Cybersource merchant account — checkout card payments will fail while this is ticked without it. Test it against the sandbox first; see README.'),
+      '#default_value' => $this->configuration['payer_auth'],
+    ];
+
     $form['log_api_calls'] = [
       '#type' => 'checkbox',
       '#title' => $this->t('Log API requests and responses to the site log'),
@@ -213,6 +252,7 @@ class CybersourceRest extends OnsitePaymentGatewayBase implements CybersourceRes
     if (!$form_state->getErrors()) {
       $values = $form_state->getValue($form['#parents']);
       $this->configuration['transaction_type'] = $values['transaction_type'];
+      $this->configuration['payer_auth'] = (bool) $values['payer_auth'];
       $this->configuration['log_api_calls'] = (bool) $values['log_api_calls'];
     }
   }
@@ -229,6 +269,270 @@ class CybersourceRest extends OnsitePaymentGatewayBase implements CybersourceRes
       'clientVersion' => 'v2',
     ];
     return $this->apiClient->generateCaptureContext($this->getMode(), $context);
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function isPayerAuthEnabled(): bool {
+    return !empty($this->configuration['payer_auth']);
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function setupPayerAuthentication(OrderInterface $order, string $transient_token): array {
+    $response = $this->apiClient->setupPayerAuth($this->getMode(), [
+      'clientReferenceInformation' => ['code' => (string) $order->id()],
+      // The RISK endpoints take the token's jti claim, not the full JWT.
+      'tokenInformation' => ['transientToken' => $this->tokenReference($transient_token)],
+    ]);
+    $info = $response->getConsumerAuthenticationInformation();
+    return [
+      'accessToken' => (string) $info->getAccessToken(),
+      'deviceDataCollectionUrl' => (string) $info->getDeviceDataCollectionUrl(),
+      'referenceId' => (string) $info->getReferenceId(),
+    ];
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function enrollPayerAuthentication(OrderInterface $order, string $transient_token, string $reference_id, array $browser, array $billing = []): array {
+    $amount = $order->getTotalPrice();
+    if ($amount === NULL) {
+      throw new InvalidRequestException('The order has no total to authenticate.');
+    }
+
+    // Card expiry/type for the lookup come from the transient token — server
+    // data, not client input.
+    try {
+      $token = TransientToken::fromJwt($transient_token);
+    }
+    catch (\InvalidArgumentException $e) {
+      throw new InvalidRequestException('The Cybersource transient token is malformed.', 0, $e);
+    }
+    $card = [
+      'expirationMonth' => $token->expirationMonth,
+      'expirationYear' => $token->expirationYear,
+    ];
+    $type_code = self::TYPE_CODES[$this->cardTypeFromBin($token->bin)] ?? '';
+    if ($type_code !== '') {
+      $card['type'] = $type_code;
+    }
+
+    $request = [
+      'clientReferenceInformation' => ['code' => (string) $order->id()],
+      'consumerAuthenticationInformation' => [
+        'referenceId' => $reference_id,
+        'returnUrl' => Url::fromRoute('cybersource_rest.payer_auth_return', [], ['absolute' => TRUE])->toString(),
+        'deviceChannel' => 'BROWSER',
+        // 500x600 challenge window (code 03) — matches the JS modal.
+        'acsWindowSize' => '03',
+      ],
+      'orderInformation' => [
+        'amountDetails' => [
+          'totalAmount' => $amount->getNumber(),
+          'currency' => $amount->getCurrencyCode(),
+        ],
+        'billTo' => $this->billToForEnrollment($order, $billing),
+      ],
+      'paymentInformation' => ['card' => $card],
+      // The RISK endpoints take the token's jti claim, not the full JWT.
+      'tokenInformation' => ['transientToken' => $this->tokenReference($transient_token)],
+      'deviceInformation' => $this->deviceInformation($browser),
+    ];
+
+    $this->maybeLogApi('payer-auth enrollment request', $request);
+    $response = $this->apiClient->checkPayerAuthEnrollment($this->getMode(), $request);
+
+    $status = strtoupper((string) $response->getStatus());
+    $info = $response->getConsumerAuthenticationInformation();
+    $pares = strtoupper((string) $info->getParesStatus());
+    $this->logResponse($order, sprintf('3DS enrollment: status=%s paresStatus=%s veresEnrolled=%s', $status, $pares, (string) $info->getVeresEnrolled()));
+
+    // Base result stashed for createPayment(). The CAVV/ECI values NEVER go to
+    // the browser: they stay server-side, bound to this session, this order and
+    // this exact token.
+    $result = [
+      'order_id' => (string) $order->id(),
+      'token_hash' => hash('sha256', $transient_token),
+      'authenticationTransactionId' => (string) $info->getAuthenticationTransactionId(),
+      'cavv' => (string) $info->getCavv(),
+      'ucafAuthenticationData' => (string) $info->getUcafAuthenticationData(),
+      'ucafCollectionIndicator' => (string) $info->getUcafCollectionIndicator(),
+      'commerceIndicator' => (string) $info->getEcommerceIndicator(),
+      'eci' => (string) $info->getEci(),
+      'xid' => (string) $info->getXid(),
+      'specificationVersion' => (string) $info->getSpecificationVersion(),
+      'directoryServerTransactionId' => (string) $info->getDirectoryServerTransactionId(),
+      'paresStatus' => $pares,
+    ];
+
+    if ($status === 'PENDING_AUTHENTICATION') {
+      $result['outcome'] = 'challenge_pending';
+      $this->paStore->set($this->paKey($order), $result);
+      // Two documented challenge shapes exist: the Cardinal step-up wrapper
+      // (stepUpUrl + a JWT access token) and the raw EMV 3DS CReq flow
+      // (acsUrl + pareq). Which one the response carries depends on the
+      // merchant account; the JS handles both.
+      return [
+        'status' => 'challenge',
+        'stepUpUrl' => (string) $info->getStepUpUrl(),
+        'accessToken' => (string) $info->getAccessToken(),
+        'acsUrl' => (string) $info->getAcsUrl(),
+        'pareq' => (string) $info->getPareq(),
+        'width' => 500,
+        'height' => 600,
+      ];
+    }
+
+    if ($status === 'AUTHENTICATION_SUCCESSFUL') {
+      // paresStatus Y (authenticated) or I (informational/exemption) carry
+      // authentication data; U/A without a CAVV is "attempted/unavailable" —
+      // the payment may proceed but without a liability shift.
+      $authenticated = $result['cavv'] !== '' || $result['ucafAuthenticationData'] !== '';
+      $result['outcome'] = $authenticated ? 'authenticated' : 'unavailable';
+      $this->paStore->set($this->paKey($order), $result);
+      return ['status' => $authenticated ? 'authenticated' : 'unavailable'];
+    }
+
+    // AUTHENTICATION_FAILED and anything unrecognised: fail closed. No stash —
+    // a subsequent createPayment() cannot proceed.
+    $this->paStore->delete($this->paKey($order));
+    return ['status' => 'failed'];
+  }
+
+  /**
+   * The tempstore key for an order's payer-authentication result.
+   */
+  protected function paKey(OrderInterface $order): string {
+    return 'payer_auth:' . $order->id();
+  }
+
+  /**
+   * The token reference (jti) the payer-auth risk endpoints expect.
+   *
+   * @param string $transient_token
+   *   The full transient-token JWT.
+   *
+   * @return string
+   *   The jti claim.
+   *
+   * @throws \Drupal\commerce_payment\Exception\InvalidRequestException
+   *   If the token is malformed or carries no jti.
+   */
+  protected function tokenReference(string $transient_token): string {
+    try {
+      $token = TransientToken::fromJwt($transient_token);
+    }
+    catch (\InvalidArgumentException $e) {
+      throw new InvalidRequestException('The Cybersource transient token is malformed.', 0, $e);
+    }
+    if ($token->jti === '') {
+      throw new InvalidRequestException('The Cybersource transient token has no jti reference.');
+    }
+    return $token->jti;
+  }
+
+  /**
+   * Build the billTo block for the payer-auth enrollment check.
+   *
+   * The enrollment runs BEFORE the order-information step is submitted, so the
+   * customer-typed billing fields arrive from the browser (as in any
+   * JS-orchestrated 3-D Secure integration — they are cardholder-entered by
+   * definition). Each value is length-capped server-side, and anything already
+   * saved on the ORDER (an existing billing profile, the order email) takes
+   * precedence over the client copy. The authoritative amount/currency never
+   * come from the client, and the AUTHORIZATION's billTo is always built from
+   * the saved profile.
+   *
+   * @param \Drupal\commerce_order\Entity\OrderInterface $order
+   *   The order.
+   * @param array<string, mixed> $billing
+   *   The billing fields posted by our checkout JS.
+   *
+   * @return array<string, string>
+   *   The billTo fields, omitting any that are empty.
+   */
+  protected function billToForEnrollment(OrderInterface $order, array $billing): array {
+    $clean = static function ($value, int $max): string {
+      $value = is_scalar($value) ? trim((string) $value) : '';
+      return mb_substr($value, 0, $max);
+    };
+    $fields = [
+      'firstName' => $clean($billing['firstName'] ?? '', 60),
+      'lastName' => $clean($billing['lastName'] ?? '', 60),
+      'address1' => $clean($billing['address1'] ?? '', 60),
+      'address2' => $clean($billing['address2'] ?? '', 60),
+      'locality' => $clean($billing['locality'] ?? '', 50),
+      'administrativeArea' => $clean($billing['administrativeArea'] ?? '', 20),
+      'postalCode' => $clean($billing['postalCode'] ?? '', 10),
+      'country' => strtoupper($clean($billing['country'] ?? '', 2)),
+    ];
+    $profile = $order->getBillingProfile();
+    if ($profile && !$profile->get('address')->isEmpty()) {
+      /** @var \Drupal\address\AddressInterface $address */
+      $address = $profile->get('address')->first();
+      $saved = array_filter([
+        'firstName' => (string) $address->getGivenName(),
+        'lastName' => (string) $address->getFamilyName(),
+        'address1' => (string) $address->getAddressLine1(),
+        'address2' => (string) $address->getAddressLine2(),
+        'locality' => (string) $address->getLocality(),
+        'administrativeArea' => (string) $address->getAdministrativeArea(),
+        'postalCode' => (string) $address->getPostalCode(),
+        'country' => (string) $address->getCountryCode(),
+      ], static fn ($v) => $v !== '');
+      $fields = $saved + $fields;
+    }
+    $email = (string) $order->getEmail();
+    if ($email === '') {
+      $candidate = $clean($billing['email'] ?? '', 254);
+      $email = filter_var($candidate, FILTER_VALIDATE_EMAIL) ? $candidate : '';
+    }
+    $fields['email'] = $email;
+    return array_filter($fields, static fn ($v) => $v !== '');
+  }
+
+  /**
+   * Sanitise the browser fingerprint fields for the enrollment check.
+   *
+   * These are client-supplied by nature (they describe the browser), so each
+   * one is validated/clamped server-side; the IP, user agent and accept header
+   * come from the request, not from the client payload.
+   *
+   * @param array<string, mixed> $browser
+   *   The raw browser fields posted by our JS.
+   *
+   * @return array<string, string>
+   *   The deviceInformation block.
+   */
+  protected function deviceInformation(array $browser): array {
+    $request = $this->requestStack->getCurrentRequest();
+    $int = static function ($value, int $min, int $max, int $fallback): string {
+      $v = is_numeric($value) ? (int) $value : $fallback;
+      return (string) max($min, min($max, $v));
+    };
+    $bool = static fn ($value): string => filter_var($value, FILTER_VALIDATE_BOOLEAN) ? 'true' : 'false';
+    $language = (string) ($browser['language'] ?? '');
+    if (!preg_match('/^[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*$/', $language)) {
+      $language = 'en';
+    }
+    $device = [
+      'ipAddress' => (string) ($request ? $request->getClientIp() : ''),
+      'httpAcceptBrowserValue' => (string) ($request ? $request->headers->get('Accept', '*/*') : '*/*'),
+      'httpAcceptContent' => (string) ($request ? $request->headers->get('Accept', '*/*') : '*/*'),
+      'userAgentBrowserValue' => (string) ($request ? $request->headers->get('User-Agent', '') : ''),
+      'httpBrowserLanguage' => $language,
+      'httpBrowserColorDepth' => $int($browser['colorDepth'] ?? NULL, 1, 48, 24),
+      'httpBrowserScreenHeight' => $int($browser['screenHeight'] ?? NULL, 0, 20000, 0),
+      'httpBrowserScreenWidth' => $int($browser['screenWidth'] ?? NULL, 0, 20000, 0),
+      'httpBrowserTimeDifference' => $int($browser['timeDifference'] ?? NULL, -1440, 1440, 0),
+      'httpBrowserJavaEnabled' => $bool($browser['javaEnabled'] ?? FALSE),
+      'httpBrowserJavaScriptEnabled' => 'true',
+    ];
+    return array_filter($device, static fn ($v) => $v !== '');
   }
 
   /**
@@ -310,6 +614,10 @@ class CybersourceRest extends OnsitePaymentGatewayBase implements CybersourceRes
       'tokenInformation' => ['transientTokenJwt' => $token],
     ];
 
+    if ($this->isPayerAuthEnabled()) {
+      $request = $this->applyPayerAuthentication($request, $order, $token);
+    }
+
     try {
       $this->maybeLogApi('createPayment request', $request);
       $response = $this->apiClient->createPayment($this->getMode(), $request);
@@ -353,6 +661,74 @@ class CybersourceRest extends OnsitePaymentGatewayBase implements CybersourceRes
     // A captured sale completes; an authorisation (or a held review) waits.
     $payment->setState(($capture && !$review) ? 'completed' : 'authorization');
     $payment->save();
+  }
+
+  /**
+   * Attach the payer-authentication result to a payment request. FAIL CLOSED.
+   *
+   * When 3-D Secure is enabled, a payment request without a matching,
+   * session-bound authentication result is refused — a client that skips or
+   * tampers with the browser-side 3DS steps cannot reach authorization. The
+   * result is single-use: it is deleted as soon as it is consumed.
+   *
+   * @param array<string, mixed> $request
+   *   The payment request being built.
+   * @param \Drupal\commerce_order\Entity\OrderInterface $order
+   *   The order being paid.
+   * @param string $token
+   *   The transient-token JWT (must be the token that was authenticated).
+   *
+   * @return array<string, mixed>
+   *   The decorated request.
+   */
+  protected function applyPayerAuthentication(array $request, OrderInterface $order, string $token): array {
+    $pa = $this->paStore->get($this->paKey($order));
+    $this->paStore->delete($this->paKey($order));
+    if (!is_array($pa)
+      || ($pa['order_id'] ?? '') !== (string) $order->id()
+      || !hash_equals((string) ($pa['token_hash'] ?? ''), hash('sha256', $token))) {
+      $this->logResponse($order, '3DS: payment refused — no payer-authentication result for this order/card (fail closed).');
+      throw new InvalidRequestException('3-D Secure authentication was not completed. Please re-enter your card details and try again.');
+    }
+
+    switch ($pa['outcome'] ?? '') {
+      case 'challenge_pending':
+        // The customer completed (or abandoned) the challenge in the browser;
+        // Cybersource validates the actual challenge result server-to-server
+        // and refuses the authorization if it did not succeed.
+        $request['processingInformation']['actionList'] = ['VALIDATE_CONSUMER_AUTHENTICATION'];
+        $request['consumerAuthenticationInformation'] = [
+          'authenticationTransactionId' => $pa['authenticationTransactionId'],
+        ];
+        break;
+
+      case 'authenticated':
+        // Frictionless success: carry the authentication data into the
+        // authorization (the documented field mapping).
+        if ($pa['commerceIndicator'] !== '') {
+          $request['processingInformation']['commerceIndicator'] = $pa['commerceIndicator'];
+        }
+        $request['consumerAuthenticationInformation'] = array_filter([
+          'cavv' => $pa['cavv'],
+          'ucafAuthenticationData' => $pa['ucafAuthenticationData'],
+          'ucafCollectionIndicator' => $pa['ucafCollectionIndicator'],
+          'xid' => $pa['xid'],
+          'directoryServerTransactionId' => $pa['directoryServerTransactionId'],
+          'paSpecificationVersion' => $pa['specificationVersion'],
+        ], static fn ($v) => $v !== '');
+        break;
+
+      case 'unavailable':
+        // Authentication attempted but unavailable: proceed WITHOUT a
+        // liability shift (standard scheme behaviour). Recorded for audit.
+        $this->logResponse($order, '3DS: authentication unavailable — proceeding without liability shift.');
+        break;
+
+      default:
+        $this->logResponse($order, sprintf('3DS: payment refused — unusable authentication outcome "%s".', (string) ($pa['outcome'] ?? '')));
+        throw new InvalidRequestException('3-D Secure authentication was not completed. Please re-enter your card details and try again.');
+    }
+    return $request;
   }
 
   /**

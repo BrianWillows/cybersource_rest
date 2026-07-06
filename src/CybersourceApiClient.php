@@ -6,6 +6,7 @@ namespace Drupal\cybersource_rest;
 
 use CyberSource\Api\CaptureApi;
 use CyberSource\Api\MicroformIntegrationApi;
+use CyberSource\Api\PayerAuthenticationApi;
 use CyberSource\Api\PaymentsApi;
 use CyberSource\Api\RefundApi;
 use CyberSource\Api\VoidApi;
@@ -14,14 +15,19 @@ use CyberSource\ApiException;
 use CyberSource\Authentication\Core\MerchantConfiguration;
 use CyberSource\Configuration;
 use CyberSource\Model\CapturePaymentRequest;
+use CyberSource\Model\CheckPayerAuthEnrollmentRequest;
 use CyberSource\Model\CreatePaymentRequest;
 use CyberSource\Model\GenerateCaptureContextRequest;
+use CyberSource\Model\PayerAuthSetupRequest;
 use CyberSource\Model\PtsV2PaymentsCapturesPost201Response;
 use CyberSource\Model\PtsV2PaymentsPost201Response;
 use CyberSource\Model\PtsV2PaymentsRefundPost201Response;
 use CyberSource\Model\PtsV2PaymentsVoidsPost201Response;
 use CyberSource\Model\Ptsv2paymentsClientReferenceInformation;
 use CyberSource\Model\RefundPaymentRequest;
+use CyberSource\Model\RiskV1AuthenticationsPost201Response;
+use CyberSource\Model\RiskV1AuthenticationSetupsPost201Response;
+use CyberSource\Model\Riskv1authenticationsetupsClientReferenceInformation;
 use CyberSource\Model\VoidPaymentRequest;
 use Drupal\cybersource_rest\Exception\CybersourceApiException;
 use Psr\Log\LoggerInterface;
@@ -130,6 +136,36 @@ final class CybersourceApiClient implements CybersourceApiClientInterface {
   }
 
   /**
+   * {@inheritdoc}
+   */
+  public function setupPayerAuth(string $mode, array $request): RiskV1AuthenticationSetupsPost201Response {
+    $api = new PayerAuthenticationApi($this->apiClient($mode));
+    try {
+      [$response] = $api->payerAuthSetup(new PayerAuthSetupRequest($this->normalize($request, Riskv1authenticationsetupsClientReferenceInformation::class)));
+    }
+    catch (ApiException $e) {
+      throw $this->translate($e, 'set up payer authentication');
+    }
+    assert($response instanceof RiskV1AuthenticationSetupsPost201Response);
+    return $response;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function checkPayerAuthEnrollment(string $mode, array $request): RiskV1AuthenticationsPost201Response {
+    $api = new PayerAuthenticationApi($this->apiClient($mode));
+    try {
+      [$response] = $api->checkPayerAuthEnrollment(new CheckPayerAuthEnrollmentRequest($this->normalize($request, Riskv1authenticationsetupsClientReferenceInformation::class)));
+    }
+    catch (ApiException $e) {
+      throw $this->translate($e, 'check payer authentication enrollment');
+    }
+    assert($response instanceof RiskV1AuthenticationsPost201Response);
+    return $response;
+  }
+
+  /**
    * Upgrade clientReferenceInformation from a plain array to its SDK model.
    *
    * The SDK's SdkTracker calls
@@ -141,13 +177,16 @@ final class CybersourceApiClient implements CybersourceApiClientInterface {
    *
    * @param array<string, mixed> $request
    *   The request body.
+   * @param class-string $reference_class
+   *   The endpoint-specific clientReferenceInformation model class (the SDK
+   *   declares a different one per API even though the shape is identical).
    *
    * @return array<string, mixed>
    *   The request body with clientReferenceInformation as a model object.
    */
-  protected function normalize(array $request): array {
+  protected function normalize(array $request, string $reference_class = Ptsv2paymentsClientReferenceInformation::class): array {
     if (isset($request['clientReferenceInformation']) && is_array($request['clientReferenceInformation'])) {
-      $request['clientReferenceInformation'] = new Ptsv2paymentsClientReferenceInformation($request['clientReferenceInformation']);
+      $request['clientReferenceInformation'] = new $reference_class($request['clientReferenceInformation']);
     }
     return $request;
   }

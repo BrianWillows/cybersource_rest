@@ -35,6 +35,10 @@ final class TransientToken {
    *   Two-digit expiry month.
    * @param string $expirationYear
    *   Four-digit expiry year.
+   * @param string $jti
+   *   The JWT id claim — the token reference the RISK (payer authentication)
+   *   endpoints expect in tokenInformation.transientToken (the payments
+   *   endpoint takes the full JWT instead).
    */
   private function __construct(
     public readonly string $jwt,
@@ -42,6 +46,7 @@ final class TransientToken {
     public readonly string $bin,
     public readonly string $expirationMonth,
     public readonly string $expirationYear,
+    public readonly string $jti,
   ) {}
 
   /**
@@ -81,6 +86,7 @@ final class TransientToken {
       $bin,
       (string) ($card['expirationMonth']['value'] ?? ''),
       (string) ($card['expirationYear']['value'] ?? ''),
+      (string) ($payload['jti'] ?? ''),
     );
   }
 

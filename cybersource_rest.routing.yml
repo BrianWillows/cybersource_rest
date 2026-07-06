@@ -1,0 +1,47 @@
+cybersource_rest.payer_auth_setup:
+  path: '/cybersource-rest/payer-auth/setup/{commerce_payment_gateway}/{commerce_order}'
+  defaults:
+    _controller: '\Drupal\cybersource_rest\Controller\PayerAuthController::setup'
+  methods: [POST]
+  requirements:
+    # Session-authenticated: the caller must own the (unpaid) order, and the
+    # gateway must be an enabled cybersource_rest gateway with 3-D Secure on —
+    # enforced by the custom access check — plus a valid session CSRF token.
+    _custom_access: '\Drupal\cybersource_rest\Controller\PayerAuthController::access'
+    _csrf_request_header_token: 'TRUE'
+  options:
+    parameters:
+      commerce_payment_gateway:
+        type: 'entity:commerce_payment_gateway'
+      commerce_order:
+        type: 'entity:commerce_order'
+
+cybersource_rest.payer_auth_enroll:
+  path: '/cybersource-rest/payer-auth/enroll/{commerce_payment_gateway}/{commerce_order}'
+  defaults:
+    _controller: '\Drupal\cybersource_rest\Controller\PayerAuthController::enroll'
+  methods: [POST]
+  requirements:
+    _custom_access: '\Drupal\cybersource_rest\Controller\PayerAuthController::access'
+    _csrf_request_header_token: 'TRUE'
+  options:
+    parameters:
+      commerce_payment_gateway:
+        type: 'entity:commerce_payment_gateway'
+      commerce_order:
+        type: 'entity:commerce_order'
+
+cybersource_rest.payer_auth_return:
+  path: '/cybersource-rest/payer-auth/return'
+  defaults:
+    _controller: '\Drupal\cybersource_rest\Controller\PayerAuthController::challengeReturn'
+  # The card issuer's ACS posts the challenge completion here INSIDE the
+  # challenge iframe (a cross-site POST, no Drupal session cookie). The page
+  # has NO side effects and reads NO request data: it only signals "challenge
+  # finished" to its parent window; the authentication result itself is
+  # validated server-to-server by Cybersource during the payment request.
+  methods: [POST]
+  requirements:
+    # Open access ON PURPOSE (see the route comment above): a cross-site ACS
+    # POST carries no session; the page is side-effect-free and reads nothing.
+    _access: 'TRUE'

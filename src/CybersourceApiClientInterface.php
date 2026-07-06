@@ -8,6 +8,8 @@ use CyberSource\Model\PtsV2PaymentsCapturesPost201Response;
 use CyberSource\Model\PtsV2PaymentsPost201Response;
 use CyberSource\Model\PtsV2PaymentsRefundPost201Response;
 use CyberSource\Model\PtsV2PaymentsVoidsPost201Response;
+use CyberSource\Model\RiskV1AuthenticationsPost201Response;
+use CyberSource\Model\RiskV1AuthenticationSetupsPost201Response;
 
 /**
  * Thin, testable wrapper around the Cybersource REST SDK.
@@ -97,5 +99,37 @@ interface CybersourceApiClientInterface {
    *   The void response.
    */
   public function voidPayment(string $mode, array $request, string $paymentId): PtsV2PaymentsVoidsPost201Response;
+
+  /**
+   * Set up payer authentication (3-D Secure) for a card / transient token.
+   *
+   * Returns the Cardinal device-data-collection parameters (access token, DDC
+   * URL, reference id) the browser needs before the enrollment check.
+   *
+   * @param string $mode
+   *   The gateway mode: 'test' or 'live'.
+   * @param array<string, mixed> $request
+   *   The PayerAuthSetupRequest body (tokenInformation.transientToken).
+   *
+   * @return \CyberSource\Model\RiskV1AuthenticationSetupsPost201Response
+   *   The setup response.
+   */
+  public function setupPayerAuth(string $mode, array $request): RiskV1AuthenticationSetupsPost201Response;
+
+  /**
+   * Check payer-authentication enrollment (the 3-D Secure lookup).
+   *
+   * Frictionless outcomes are final in this response; a challenge outcome
+   * carries the step-up URL + access token for the challenge iframe.
+   *
+   * @param string $mode
+   *   The gateway mode: 'test' or 'live'.
+   * @param array<string, mixed> $request
+   *   The CheckPayerAuthEnrollmentRequest body.
+   *
+   * @return \CyberSource\Model\RiskV1AuthenticationsPost201Response
+   *   The enrollment response.
+   */
+  public function checkPayerAuthEnrollment(string $mode, array $request): RiskV1AuthenticationsPost201Response;
 
 }

@@ -192,20 +192,248 @@
             showError((err && err.message) || Drupal.t('Your card could not be processed. Please check your details and try again.'));
             return;
           }
-          tokenField.value = token;
-          form.dataset.cybersourceTokenized = '1';
-          if (submitter) {
-            submitter.removeAttribute('disabled');
-            submitter.click();
+          var finish = function () {
+            tokenField.value = token;
+            form.dataset.cybersourceTokenized = '1';
+            if (submitter) {
+              submitter.removeAttribute('disabled');
+              submitter.click();
+            }
+            else if (typeof form.requestSubmit === 'function') {
+              form.requestSubmit();
+            }
+            else {
+              form.submit();
+            }
+          };
+          var fail = function (message) {
+            if (submitter) { submitter.removeAttribute('disabled'); }
+            showError(message || Drupal.t('Your card could not be processed. Please check your details and try again.'));
+          };
+          if (!settings.payerAuth) {
+            finish();
+            return;
           }
-          else if (typeof form.requestSubmit === 'function') {
-            form.requestSubmit();
-          }
-          else {
-            form.submit();
-          }
+          runPayerAuth(token, finish, fail);
         });
       });
+    }
+
+    /**
+     * 3-D Secure: setup -> device data collection -> enrollment -> challenge.
+     *
+     * The server keeps the authentication RESULT (CAVV etc.) to itself; the
+     * browser only ferries the Cardinal UI steps. If anything here is skipped
+     * or fails, the server refuses the payment (fail closed).
+     */
+    function runPayerAuth(token, done, fail) {
+      var unavailable = Drupal.t('Card authentication is temporarily unavailable. Please try again.');
+      getCsrfToken().then(function (csrf) {
+        return postJson(settings.paSetupUrl, { token: token }, csrf).then(function (setup) {
+          if (!setup || !setup.accessToken || !setup.deviceDataCollectionUrl) {
+            throw new Error('setup');
+          }
+          return runDeviceDataCollection(setup).then(function () {
+            return postJson(settings.paEnrollUrl, {
+              token: token,
+              referenceId: setup.referenceId,
+              browser: collectBrowserData(),
+              billing: collectBillingData()
+            }, csrf);
+          });
+        });
+      }).then(function (result) {
+        if (!result || !result.status) { throw new Error('enroll'); }
+        if (result.status === 'authenticated' || result.status === 'unavailable') {
+          done();
+        }
+        else if (result.status === 'challenge') {
+          runChallenge(result).then(done, function () {
+            fail(Drupal.t('Card authentication was not completed. Please try again.'));
+          });
+        }
+        else {
+          fail(Drupal.t('Your bank could not authenticate this card. Please use another card or contact your bank.'));
+        }
+      }).catch(function () {
+        fail(unavailable);
+      });
+    }
+
+    function getCsrfToken() {
+      return fetch(Drupal.url('session/token'), { credentials: 'same-origin' })
+        .then(function (r) { return r.text(); });
+    }
+
+    function postJson(url, body, csrf) {
+      return fetch(url, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+        body: JSON.stringify(body)
+      }).then(function (r) {
+        if (!r.ok) { throw new Error('http ' + r.status); }
+        return r.json();
+      });
+    }
+
+    /**
+     * Cardinal device data collection: hidden iframe POST, completion by
+     * postMessage from the Cardinal origin. Proceeds after 10s regardless
+     * (per the Cybersource guidance) so a blocked profiler cannot wedge
+     * checkout.
+     */
+    function runDeviceDataCollection(setup) {
+      return new Promise(function (resolve) {
+        var cleanupDone = false;
+        var iframe = document.createElement('iframe');
+        iframe.style.cssText = 'display:none;width:10px;height:10px;';
+        iframe.name = 'cybersource-rest-ddc';
+        var ddcForm = document.createElement('form');
+        ddcForm.method = 'POST';
+        ddcForm.target = iframe.name;
+        ddcForm.action = setup.deviceDataCollectionUrl;
+        ddcForm.style.display = 'none';
+        var jwtInput = document.createElement('input');
+        jwtInput.type = 'hidden';
+        jwtInput.name = 'JWT';
+        jwtInput.value = setup.accessToken;
+        ddcForm.appendChild(jwtInput);
+        document.body.appendChild(iframe);
+        document.body.appendChild(ddcForm);
+
+        function cleanup() {
+          if (cleanupDone) { return; }
+          cleanupDone = true;
+          window.removeEventListener('message', onMessage);
+          iframe.remove();
+          ddcForm.remove();
+          resolve();
+        }
+        function onMessage(event) {
+          if (event.origin !== settings.paDdcOrigin) { return; }
+          cleanup();
+        }
+        window.addEventListener('message', onMessage);
+        setTimeout(cleanup, 10000);
+        ddcForm.submit();
+      });
+    }
+
+    /**
+     * The issuer challenge, in a modal iframe. Completion is signalled by our
+     * own challenge-return page (same origin) posting a message to the parent.
+     */
+    function runChallenge(challenge) {
+      return new Promise(function (resolve, reject) {
+        var settled = false;
+        var overlay = document.createElement('div');
+        overlay.className = 'cybersource-pa-overlay';
+        var frameWrap = document.createElement('div');
+        frameWrap.className = 'cybersource-pa-window';
+        frameWrap.style.width = (challenge.width || 500) + 'px';
+        frameWrap.style.height = (challenge.height || 600) + 'px';
+        var iframe = document.createElement('iframe');
+        iframe.name = 'cybersource-rest-challenge';
+        iframe.className = 'cybersource-pa-frame';
+        frameWrap.appendChild(iframe);
+        overlay.appendChild(frameWrap);
+        // Two challenge shapes: Cardinal step-up (stepUpUrl + JWT) or the raw
+        // EMV 3DS CReq flow (acsUrl + pareq). Fail closed on neither.
+        var action;
+        var fields;
+        if (challenge.stepUpUrl && challenge.accessToken) {
+          action = challenge.stepUpUrl;
+          fields = { JWT: challenge.accessToken };
+        }
+        else if (challenge.acsUrl && challenge.pareq) {
+          action = challenge.acsUrl;
+          fields = { creq: challenge.pareq };
+        }
+        else {
+          reject(new Error('challenge-params'));
+          return;
+        }
+        var challengeForm = document.createElement('form');
+        challengeForm.method = 'POST';
+        challengeForm.target = iframe.name;
+        challengeForm.action = action;
+        challengeForm.style.display = 'none';
+        Object.keys(fields).forEach(function (name) {
+          var input = document.createElement('input');
+          input.type = 'hidden';
+          input.name = name;
+          input.value = fields[name];
+          challengeForm.appendChild(input);
+        });
+        document.body.appendChild(overlay);
+        document.body.appendChild(challengeForm);
+
+        function settle(ok) {
+          if (settled) { return; }
+          settled = true;
+          window.removeEventListener('message', onMessage);
+          overlay.remove();
+          challengeForm.remove();
+          if (ok) { resolve(); } else { reject(new Error('challenge')); }
+        }
+        function onMessage(event) {
+          // Completion comes from OUR challenge-return page (same origin).
+          if (event.origin !== window.location.origin) { return; }
+          if (event.data && event.data.cybersourceRestPaComplete) { settle(true); }
+        }
+        window.addEventListener('message', onMessage);
+        // Fallback completion detection: some account configurations (the raw
+        // acsUrl/pareq shape) never navigate the iframe back to our return
+        // page. The iframe's SECOND load means the ACS moved past the
+        // challenge screen (the CRes round), so proceed then — safely: the
+        // authorization validates the real challenge outcome server-to-server
+        // and refuses the payment if authentication did not succeed.
+        var loads = 0;
+        iframe.addEventListener('load', function () {
+          loads++;
+          if (loads >= 2) {
+            setTimeout(function () { settle(true); }, 1500);
+          }
+        });
+        // The customer gets 10 minutes before we give up.
+        setTimeout(function () { settle(false); }, 600000);
+        challengeForm.submit();
+      });
+    }
+
+    /** Browser fingerprint fields for the 3DS enrollment check. */
+    function collectBrowserData() {
+      var javaEnabled = false;
+      try { javaEnabled = !!(navigator.javaEnabled && navigator.javaEnabled()); }
+      catch (e) { javaEnabled = false; }
+      return {
+        colorDepth: window.screen ? window.screen.colorDepth : 24,
+        screenHeight: window.screen ? window.screen.height : 0,
+        screenWidth: window.screen ? window.screen.width : 0,
+        timeDifference: new Date().getTimezoneOffset(),
+        language: navigator.language || 'en',
+        javaEnabled: javaEnabled
+      };
+    }
+
+    /** The customer-typed billing fields (the server caps and re-checks). */
+    function collectBillingData() {
+      var read = function (selector) {
+        var el = document.querySelector(selector);
+        return el && typeof el.value === 'string' ? el.value : '';
+      };
+      return {
+        firstName: read('[name*="[given_name]"]'),
+        lastName: read('[name*="[family_name]"]'),
+        address1: read('[name*="[address_line1]"]'),
+        address2: read('[name*="[address_line2]"]'),
+        locality: read('[name*="[locality]"]'),
+        administrativeArea: read('[name*="[administrative_area]"]'),
+        postalCode: read('[name*="[postal_code]"]'),
+        country: read('select[name*="[country_code]"]'),
+        email: read('input[name*="[email]"]')
+      };
     }
 
     // Load the Microform client library (once), then initialise.

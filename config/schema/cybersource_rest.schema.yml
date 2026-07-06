@@ -5,6 +5,9 @@ commerce_payment.commerce_payment_gateway.plugin.cybersource_rest:
     transaction_type:
       type: string
       label: 'Transaction type'
+    payer_auth:
+      type: boolean
+      label: 'Enable 3-D Secure (Payer Authentication)'
     log_api_calls:
       type: boolean
       label: 'Log API requests and responses'
