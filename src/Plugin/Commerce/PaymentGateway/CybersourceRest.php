@@ -182,9 +182,11 @@ class CybersourceRest extends OnsitePaymentGatewayBase implements CybersourceRes
 
     // Credentials are read from a FIXED private file
     // (private://keys/cybersource_rest.yml) and are deliberately NOT
-    // configurable here — a configurable path would let
-    // an admin point the gateway at attacker-controlled credentials. This panel
-    // only reports whether that file is present and which modes it covers.
+    // configurable here: keeping the secrets and their location out of config
+    // means they cannot leak through config export/sync, and changing what
+    // the gateway authenticates with always requires filesystem (deployment)
+    // access rather than a Drupal role. This panel only reports whether that
+    // file is present and which modes it covers.
     $form['credentials_status'] = [
       '#type' => 'item',
       '#title' => $this->t('Credentials file'),

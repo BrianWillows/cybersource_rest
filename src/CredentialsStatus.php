@@ -5,7 +5,8 @@ declare(strict_types=1);
 namespace Drupal\cybersource_rest;
 
 use Drupal\Core\Entity\EntityTypeManagerInterface;
-use Drupal\Core\File\FileSystemInterface;
+use Drupal\Core\StreamWrapper\LocalStream;
+use Drupal\Core\StreamWrapper\StreamWrapperManagerInterface;
 use Drupal\Core\StringTranslation\StringTranslationTrait;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
 
@@ -39,7 +40,7 @@ final class CredentialsStatus {
   public const SEVERITY_ERROR = 2;
 
   public function __construct(
-    protected FileSystemInterface $fileSystem,
+    protected StreamWrapperManagerInterface $streamWrapperManager,
     protected CredentialProvider $credentials,
     protected EntityTypeManagerInterface $entityTypeManager,
   ) {}
@@ -60,8 +61,10 @@ final class CredentialsStatus {
   public function runtimeRequirements(): array {
     $requirements = [];
 
-    $private = $this->fileSystem->realpath('private://');
-    if (!$private) {
+    // The credentials live in the private filesystem; without it nothing
+    // works. The private:// scheme is only registered when
+    // $settings['file_private_path'] is set (any backend — local or remote).
+    if (!$this->streamWrapperManager->isValidScheme('private')) {
       $requirements['cybersource_rest_private'] = [
         'title' => $this->t('Cybersource REST: private filesystem'),
         'value' => $this->t('Not configured'),
@@ -200,7 +203,11 @@ final class CredentialsStatus {
    *   The translated, marked-up message.
    */
   public function credentialsErrorMessage(string $reason): TranslatableMarkup {
-    $private = $this->fileSystem->realpath('private://');
+    // Show the on-disk location as a convenience where the private
+    // filesystem is on local disk; for remote wrappers (e.g. S3) the URI is
+    // the only meaningful address.
+    $wrapper = $this->streamWrapperManager->getViaScheme('private');
+    $private = $wrapper instanceof LocalStream ? $wrapper->getDirectoryPath() : FALSE;
     $path = ($private ?: '<private files>') . '/keys/cybersource_rest.yml';
     return $this->t('The Cybersource REST credentials file is missing or could not be read (@msg). Create it at <span style="white-space:nowrap">%uri</span> — on this server that is the file <span style="white-space:nowrap">%path</span> — readable by the web server user only (e.g. chmod 640). Copy the module\'s cybersource_rest.credentials.example.yml as a starting point and fill in your merchant_id, key_id and shared_secret.', [
       '@msg' => $reason,

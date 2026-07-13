@@ -4,19 +4,28 @@ declare(strict_types=1);
 
 namespace Drupal\cybersource_rest;
 
-use Drupal\Core\File\FileSystemInterface;
+use Drupal\Core\StreamWrapper\LocalStream;
+use Drupal\Core\StreamWrapper\StreamWrapperManagerInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Yaml\Yaml;
 
 /**
  * Loads Cybersource REST API credentials from a fixed private file.
  *
- * Credentials are deliberately kept OUT of Drupal config (and therefore out of
- * git / config exports) AND the file location is hardcoded — it is NOT
- * configurable. A configurable path would let an attacker with admin rights
- * point the gateway at credentials they control. The file always lives at
- * private://keys/cybersource_rest.yml (the private filesystem, outside the
- * docroot).
+ * Credentials are deliberately kept OUT of Drupal config, and the file
+ * location is fixed (not configurable), because:
+ * - Secrets that never enter config entities cannot leak through config
+ *   export (drush cex), git, config sync between environments, or a copied
+ *   staging database.
+ * - Reading or replacing the shared secret always requires filesystem
+ *   (deployment) access; no Drupal role or admin form exposes or accepts
+ *   credential material.
+ * - A single well-known URI keeps the requirements check, the admin
+ *   messages and the documentation unambiguous.
+ *
+ * All access goes through the private:// stream wrapper (PHP filesystem
+ * functions accept stream URIs), so a private filesystem backed by a remote
+ * wrapper (e.g. S3) behaves the same as local disk.
  *
  * The file holds one block per mode (`test`, `live`); each block carries the
  * three HTTP-Signature credentials: merchant_id, key_id (the keyId / Serial
@@ -36,7 +45,7 @@ final class CredentialProvider {
   private const REQUIRED_KEYS = ['merchant_id', 'key_id', 'shared_secret'];
 
   /**
-   * Parsed YAML cache, keyed by realpath, with mtime for invalidation.
+   * Parsed YAML cache, keyed by URI, with mtime for invalidation.
    *
    * @var array<string, array{mtime:int, data:array<string, mixed>}>
    */
@@ -44,28 +53,8 @@ final class CredentialProvider {
 
   public function __construct(
     protected LoggerInterface $logger,
-    protected FileSystemInterface $fileSystem,
+    protected StreamWrapperManagerInterface $streamWrapperManager,
   ) {}
-
-  /**
-   * Resolve the fixed credentials URI to an absolute path.
-   *
-   * @return string
-   *   The absolute filesystem path.
-   *
-   * @throws \RuntimeException
-   *   If the private filesystem is unconfigured or the file is absent.
-   */
-  protected function resolvePath(): string {
-    $real = $this->fileSystem->realpath(self::CREDENTIALS_URI);
-    if ($real === FALSE || !file_exists($real)) {
-      throw new \RuntimeException(sprintf(
-        'Cybersource REST credentials file not found at %s. Configure the private filesystem and place the file there.',
-        self::CREDENTIALS_URI
-      ));
-    }
-    return $real;
-  }
 
   /**
    * Parse and cache the credentials file.
@@ -74,25 +63,37 @@ final class CredentialProvider {
    *   The parsed YAML.
    *
    * @throws \RuntimeException
-   *   If the file is missing, unreadable, or invalid.
+   *   If the private filesystem is unconfigured, or the file is missing,
+   *   unreadable, or invalid.
    */
   public function load(): array {
-    $real = $this->resolvePath();
-    if (!is_readable($real)) {
-      throw new \RuntimeException(sprintf('Cybersource REST credentials file is not readable: %s', self::CREDENTIALS_URI));
+    $uri = self::CREDENTIALS_URI;
+    if (!$this->streamWrapperManager->isValidUri($uri)) {
+      throw new \RuntimeException(sprintf(
+        'The private filesystem is not configured, so %s cannot exist. Set $settings["file_private_path"].',
+        $uri
+      ));
     }
-    // Warn once if the file is world-readable; it should be web-user-only.
-    static $warned = FALSE;
-    if (!$warned && ($perms = @fileperms($real)) !== FALSE && ($perms & 0004)) {
-      $this->logger->warning('Cybersource REST credentials file @uri is world-readable; restrict it to the web server user.', ['@uri' => self::CREDENTIALS_URI]);
-      $warned = TRUE;
+    if (!file_exists($uri)) {
+      throw new \RuntimeException(sprintf(
+        'Cybersource REST credentials file not found at %s. Place the file there.',
+        $uri
+      ));
     }
-    $mtime = (int) filemtime($real);
-    if (isset($this->cache[$real]) && $this->cache[$real]['mtime'] === $mtime) {
-      return $this->cache[$real]['data'];
+    if (!is_readable($uri)) {
+      throw new \RuntimeException(sprintf('Cybersource REST credentials file is not readable: %s', $uri));
+    }
+    $this->warnIfWorldReadable();
+    $mtime = (int) @filemtime($uri);
+    if (isset($this->cache[$uri]) && $this->cache[$uri]['mtime'] === $mtime) {
+      return $this->cache[$uri]['data'];
+    }
+    $raw = @file_get_contents($uri);
+    if ($raw === FALSE) {
+      throw new \RuntimeException(sprintf('Cybersource REST credentials file could not be read: %s', $uri));
     }
     try {
-      $data = Yaml::parseFile($real);
+      $data = Yaml::parse($raw);
     }
     catch (\Throwable $e) {
       throw new \RuntimeException(sprintf('Cybersource REST credentials file is not valid YAML: %s', $e->getMessage()), 0, $e);
@@ -100,8 +101,36 @@ final class CredentialProvider {
     if (!is_array($data)) {
       throw new \RuntimeException('Cybersource REST credentials file did not parse to a mapping.');
     }
-    $this->cache[$real] = ['mtime' => $mtime, 'data' => $data];
+    $this->cache[$uri] = ['mtime' => $mtime, 'data' => $data];
     return $data;
+  }
+
+  /**
+   * Warn once per request if the credentials file is world-readable.
+   *
+   * File permissions are only meaningful when the private filesystem lives
+   * on local disk, and FileSystemInterface::realpath() may only be used on
+   * stream wrappers known to be local — so the check runs only for
+   * LocalStream wrappers and is skipped for remote ones (e.g. S3), whose
+   * access control is the remote service's concern.
+   */
+  protected function warnIfWorldReadable(): void {
+    static $checked = FALSE;
+    if ($checked) {
+      return;
+    }
+    $checked = TRUE;
+    $wrapper = $this->streamWrapperManager->getViaUri(self::CREDENTIALS_URI);
+    if (!$wrapper instanceof LocalStream) {
+      return;
+    }
+    // StreamWrapperInterface::realpath() is typed string but documents (and
+    // LocalStream implements) FALSE on failure — e.g. a vfs-backed test
+    // filesystem — so guard by truthiness rather than !== FALSE.
+    $real = $wrapper->realpath();
+    if ($real && ($perms = @fileperms($real)) !== FALSE && ($perms & 0004)) {
+      $this->logger->warning('Cybersource REST credentials file @uri is world-readable; restrict it to the web server user.', ['@uri' => self::CREDENTIALS_URI]);
+    }
   }
 
   /**
