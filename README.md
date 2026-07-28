@@ -14,16 +14,46 @@ validation).
 
 Compared with putting Cybersource credentials in the gateway configuration
 (where they end up in config exports and git), this module keeps the
-**merchant id / keyId / shared secret in a private file** outside the docroot,
-resolved at runtime by mode. The REST SDK is wrapped behind a small, mockable
-service so the gateway is unit/kernel-testable.
+**merchant id / keyId / shared secret out of Drupal config entirely**,
+resolved at runtime by mode from `settings.php`. The REST SDK is wrapped
+behind a small, mockable service so the gateway is unit/kernel-testable.
 
 ## Requirements
 
 - Drupal Commerce (`commerce_payment`, `commerce_order`, `commerce_price`,
   `commerce_log`).
 - `cybersource/rest-client-php` (pulled in via Composer).
-- A configured **private filesystem** (`$settings['file_private_path']`).
+
+## Why credentials come from settings.php
+
+Cybersource credentials are **never** stored in Drupal configuration (and so
+are never written to the database or exported to `config`/git), and there is
+**no admin UI** for them: an administrator who could read the shared secret
+could sign their own API calls, and one who could replace it could redirect
+funds. Reading or changing the credentials always requires deployment
+(filesystem) access.
+
+Instead, the credentials are provided by `settings.php`, checked in this
+order:
+
+1. `$settings['cybersource_rest.credentials']` — the credentials array
+   itself. Because `settings.php` is PHP, you can populate this from
+   whatever secret store your host provides: a platform secrets API (e.g.
+   Pantheon Customer Secrets), `getenv()`, or an `include` of a file kept
+   out of version control. The secrets need never touch the site's
+   filesystem. **Never write literal key values into a settings.php that is
+   committed to version control.**
+2. `$settings['cybersource_rest.credentials_file']` — the absolute path of a
+   YAML file (see `cybersource_rest.credentials.example.yml`). Put it
+   **outside** the web root and outside the Drupal public/private files
+   directories, so it is not reachable through the web server, Drupal's file
+   APIs, stream wrappers, or file download hooks; make it readable by the
+   web server user only (e.g. `chmod 640`).
+
+Whichever source is used, one block per mode: a `test` gateway uses the
+`test` block (`apitest.cybersource.com`); a `live` gateway uses the `live`
+block (`api.cybersource.com`). One merchant account serves every currency,
+so — unlike Secure Acceptance — there is no per-currency profile.
 
 ## Setup
 
@@ -32,10 +62,25 @@ service so the gateway is unit/kernel-testable.
    "Shared Secret"*. You get a **keyId (Serial Number)** and a **Shared Secret**.
    Note your **merchant id**.
 
-2. **Create the credentials file** at `private://keys/cybersource_rest.yml`
-   (i.e. `<file_private_path>/keys/cybersource_rest.yml`), readable by the web
-   user only (e.g. `chmod 640`). Copy `cybersource_rest.credentials.example.yml` as a
-   starting point:
+2. Copy `cybersource_rest.credentials.example.yml` to a directory **outside**
+   the web root (and outside the Drupal public/private files directories),
+   fill in real values, and make it readable by the web server user only. In
+   `settings.php`, point the module at it:
+
+   ```php
+   $settings['cybersource_rest.credentials_file'] = '/path/outside/webroot/cybersource_rest.yml';
+   ```
+
+   On hosts where you cannot write outside the web root, prefer the inline
+   form fed from the host's secret store instead (same structure as the
+   example file), e.g.:
+
+   ```php
+   // Pantheon Customer Secrets, environment variables, or a non-VCS include.
+   $settings['cybersource_rest.credentials'] = json_decode(pantheon_get_secret('cybersource_rest'), TRUE);
+   ```
+
+   The YAML/array structure itself is unchanged:
 
    ```yaml
    test:
@@ -51,12 +96,14 @@ service so the gateway is unit/kernel-testable.
 3. **Add the gateway**: *Commerce » Configuration » Payment gateways » Add*,
    choose **Cybersource (REST Microform)**, pick the mode (test → the `test`
    block + `apitest.cybersource.com`; live → the `live` block +
-   `api.cybersource.com`) and the transaction type (authorize, or sale).
+   `api.cybersource.com`) and the transaction type (authorize, or sale). The
+   gateway panel reports whether the credentials are present and which modes
+   they cover.
 
 4. Check *Reports » Status report* for the module's runtime checks.
 
 Optionally, if you rotate your REST API keys on a schedule, add a `key_expiry`
-(a `YYYY-MM-DD` date) to each block in the credentials file. The status report
+(a `YYYY-MM-DD` date) to each block in the credentials. The status report
 then warns a month before that date and shows an error once it has passed, so a
 key rotation never silently breaks payments:
 

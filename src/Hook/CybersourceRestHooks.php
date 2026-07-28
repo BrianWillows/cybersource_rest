@@ -52,7 +52,7 @@ final class CybersourceRestHooks implements ContainerInjectionInterface {
     if ($route_name !== 'help.page.cybersource_rest') {
       return '';
     }
-    return '<p>' . $this->t('Cybersource REST / Flex Microform v2 payment gateway for Drupal Commerce. Card data is captured in Cybersource-hosted Microform iframes (the PAN/CVV never reach this server) and charged server-side via the Cybersource REST API. API credentials live in a private file, not in site configuration. See the module README for setup and the PCI scope caveat.') . '</p>';
+    return '<p>' . $this->t('Cybersource REST / Flex Microform v2 payment gateway for Drupal Commerce. Card data is captured in Cybersource-hosted Microform iframes (the PAN/CVV never reach this server) and charged server-side via the Cybersource REST API. API credentials are provided through settings.php, not stored in site configuration. See the module README for setup and the PCI scope caveat.') . '</p>';
   }
 
   /**

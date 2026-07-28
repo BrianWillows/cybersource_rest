@@ -5,8 +5,6 @@ declare(strict_types=1);
 namespace Drupal\cybersource_rest;
 
 use Drupal\Core\Entity\EntityTypeManagerInterface;
-use Drupal\Core\StreamWrapper\LocalStream;
-use Drupal\Core\StreamWrapper\StreamWrapperManagerInterface;
 use Drupal\Core\StringTranslation\StringTranslationTrait;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
 
@@ -40,7 +38,6 @@ final class CredentialsStatus {
   public const SEVERITY_ERROR = 2;
 
   public function __construct(
-    protected StreamWrapperManagerInterface $streamWrapperManager,
     protected CredentialProvider $credentials,
     protected EntityTypeManagerInterface $entityTypeManager,
   ) {}
@@ -48,8 +45,8 @@ final class CredentialsStatus {
   /**
    * Builds the module's runtime requirements (status report entries).
    *
-   * Surfaces the setup that silently breaks payments: the private filesystem,
-   * the credentials file, test mode, key expiry, and the checkout CSP note.
+   * Surfaces the setup that silently breaks payments: the credentials
+   * settings, test mode, key expiry, and the checkout CSP note.
    *
    * Severities are returned as integers (see the SEVERITY_* constants) so the
    * same array serves both the legacy and the object-oriented requirements
@@ -61,19 +58,22 @@ final class CredentialsStatus {
   public function runtimeRequirements(): array {
     $requirements = [];
 
-    // The credentials live in the private filesystem; without it nothing
-    // works. The private:// scheme is only registered when
-    // $settings['file_private_path'] is set (any backend — local or remote).
-    if (!$this->streamWrapperManager->isValidScheme('private')) {
-      $requirements['cybersource_rest_private'] = [
-        'title' => $this->t('Cybersource REST: private filesystem'),
+    // Credentials must be provided through settings.php; without either
+    // setting nothing works.
+    if (!$this->credentials->isConfigured()) {
+      $requirements['cybersource_rest_creds'] = [
+        'title' => $this->t('Cybersource REST: credentials'),
         'value' => $this->t('Not configured'),
-        'description' => $this->t('Set $settings["file_private_path"] to a directory OUTSIDE the web root. Cybersource credentials are read from %uri.', ['%uri' => CredentialProvider::CREDENTIALS_URI]),
+        'description' => $this->t('In settings.php, set $settings["@file_setting"] to the absolute path of your credentials YAML file (outside the web root), or provide the credentials array as $settings["@inline_setting"] populated from your host\'s secret store. See the module README.', [
+          '@file_setting' => CredentialProvider::SETTING_CREDENTIALS_FILE,
+          '@inline_setting' => CredentialProvider::SETTING_CREDENTIALS,
+        ]),
         'severity' => self::SEVERITY_ERROR,
       ];
       return $requirements;
     }
 
+    // Credentials resolvable, readable, and actually filled in.
     try {
       $this->credentials->load();
       $modes = $this->credentials->configuredModes();
@@ -81,15 +81,15 @@ final class CredentialsStatus {
         $requirements['cybersource_rest_creds'] = [
           'title' => $this->t('Cybersource REST: credentials'),
           'value' => $this->t('No complete profiles configured'),
-          'description' => $this->t('Copy cybersource_rest.credentials.example.yml to %uri and fill in a test and/or live profile. Payments cannot be taken until then.', ['%uri' => CredentialProvider::CREDENTIALS_URI]),
+          'description' => $this->t('The credentials in %source contain no complete profile. Use cybersource_rest.credentials.example.yml as a starting point. Payments cannot be taken until then.', ['%source' => $this->credentials->source()]),
           'severity' => self::SEVERITY_WARNING,
         ];
       }
       else {
         $requirements['cybersource_rest_creds'] = [
           'title' => $this->t('Cybersource REST: credentials'),
-          'value' => $this->t('Loaded from %uri (modes: @modes)', [
-            '%uri' => CredentialProvider::CREDENTIALS_URI,
+          'value' => $this->t('Loaded from %source (modes: @modes)', [
+            '%source' => $this->credentials->source(),
             '@modes' => implode(', ', $modes),
           ]),
           'severity' => self::SEVERITY_OK,
@@ -97,6 +97,9 @@ final class CredentialsStatus {
       }
     }
     catch (\Throwable $e) {
+      // Missing or unreadable/invalid file: payments cannot work, so this is
+      // an error with the exact location and steps to create the file (shared
+      // with the admin message from CredentialsCheckSubscriber).
       $requirements['cybersource_rest_creds'] = [
         'title' => $this->t('Cybersource REST: credentials'),
         'value' => $this->t('Missing or invalid — payments cannot be taken'),
@@ -158,9 +161,9 @@ final class CredentialsStatus {
         $requirements['cybersource_rest_key_expired'] = [
           'title' => $this->t('Cybersource REST: key expiry'),
           'value' => $this->t('Expired: @list', ['@list' => implode(', ', $expired)]),
-          'description' => $this->t('These Cybersource REST API keys are past their recorded expiry: @list. Generate a new key in the Business Center (Payment Configuration » Key Management » REST APIs), update %uri, and refresh its key_expiry.', [
+          'description' => $this->t('These Cybersource REST API keys are past their recorded expiry: @list. Generate a new key in the Business Center (Payment Configuration » Key Management » REST APIs), update the credentials in %source, and refresh its key_expiry.', [
             '@list' => implode(', ', $expired),
-            '%uri' => CredentialProvider::CREDENTIALS_URI,
+            '%source' => $this->credentials->source(),
           ]),
           'severity' => self::SEVERITY_ERROR,
         ];
@@ -169,9 +172,9 @@ final class CredentialsStatus {
         $requirements['cybersource_rest_key_expiring'] = [
           'title' => $this->t('Cybersource REST: key expiry'),
           'value' => $this->t('Expiring soon: @list', ['@list' => implode(', ', $expiring)]),
-          'description' => $this->t('These Cybersource REST API keys reach their recorded expiry within a month: @list. Generate a replacement key in the Business Center (Payment Configuration » Key Management » REST APIs) and update %uri before then.', [
+          'description' => $this->t('These Cybersource REST API keys reach their recorded expiry within a month: @list. Generate a replacement key in the Business Center (Payment Configuration » Key Management » REST APIs) and update the credentials in %source before then.', [
             '@list' => implode(', ', $expiring),
-            '%uri' => CredentialProvider::CREDENTIALS_URI,
+            '%source' => $this->credentials->source(),
           ]),
           'severity' => self::SEVERITY_WARNING,
         ];
@@ -203,16 +206,9 @@ final class CredentialsStatus {
    *   The translated, marked-up message.
    */
   public function credentialsErrorMessage(string $reason): TranslatableMarkup {
-    // Show the on-disk location as a convenience where the private
-    // filesystem is on local disk; for remote wrappers (e.g. S3) the URI is
-    // the only meaningful address.
-    $wrapper = $this->streamWrapperManager->getViaScheme('private');
-    $private = $wrapper instanceof LocalStream ? $wrapper->getDirectoryPath() : FALSE;
-    $path = ($private ?: '<private files>') . '/keys/cybersource_rest.yml';
-    return $this->t('The Cybersource REST credentials file is missing or could not be read (@msg). Create it at <span style="white-space:nowrap">%uri</span> — on this server that is the file <span style="white-space:nowrap">%path</span> — readable by the web server user only (e.g. chmod 640). Copy the module\'s cybersource_rest.credentials.example.yml as a starting point and fill in your merchant_id, key_id and shared_secret.', [
+    return $this->t('The Cybersource REST credentials could not be loaded (@msg). Provide them in settings.php via <span style="white-space:nowrap">%source</span>: either an absolute path to a YAML file outside the web root, readable by the web server user only (e.g. chmod 640), or the credentials array itself populated from your host\'s secret store. Copy the module\'s cybersource_rest.credentials.example.yml as a starting point and fill in your merchant_id, key_id and shared_secret.', [
       '@msg' => $reason,
-      '%uri' => CredentialProvider::CREDENTIALS_URI,
-      '%path' => $path,
+      '%source' => $this->credentials->source(),
     ]);
   }
 

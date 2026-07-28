@@ -5,11 +5,11 @@ services:
 
   cybersource_rest.credentials:
     class: Drupal\cybersource_rest\CredentialProvider
-    arguments: ['@logger.channel.cybersource_rest', '@stream_wrapper_manager']
+    arguments: ['@logger.channel.cybersource_rest', '@settings']
 
   cybersource_rest.credentials_status:
     class: Drupal\cybersource_rest\CredentialsStatus
-    arguments: ['@stream_wrapper_manager', '@cybersource_rest.credentials', '@entity_type.manager']
+    arguments: ['@cybersource_rest.credentials', '@entity_type.manager']
 
   # Class alias so the autowired hook class (Drupal 11.1+ registers
   # #[Hook] classes as services) can receive CredentialsStatus by type.

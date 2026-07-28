@@ -4,40 +4,50 @@ declare(strict_types=1);
 
 namespace Drupal\cybersource_rest;
 
-use Drupal\Core\StreamWrapper\LocalStream;
-use Drupal\Core\StreamWrapper\StreamWrapperManagerInterface;
+use Drupal\Core\Site\Settings;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Yaml\Yaml;
 
 /**
- * Loads Cybersource REST API credentials from a fixed private file.
+ * Loads Cybersource REST API credentials from $settings.
  *
- * Credentials are deliberately kept OUT of Drupal config, and the file
- * location is fixed (not configurable), because:
+ * Credentials are deliberately kept OUT of Drupal config, and there is no
+ * admin UI for them, because:
  * - Secrets that never enter config entities cannot leak through config
  *   export (drush cex), git, config sync between environments, or a copied
  *   staging database.
  * - Reading or replacing the shared secret always requires filesystem
  *   (deployment) access; no Drupal role or admin form exposes or accepts
  *   credential material.
- * - A single well-known URI keeps the requirements check, the admin
- *   messages and the documentation unambiguous.
  *
- * All access goes through the private:// stream wrapper (PHP filesystem
- * functions accept stream URIs), so a private filesystem backed by a remote
- * wrapper (e.g. S3) behaves the same as local disk.
+ * Where the credentials come from is a per-site deployment decision made in
+ * settings.php, checked in this order:
+ * - $settings['cybersource_rest.credentials']: the parsed credentials array
+ *   itself. Because settings.php is PHP, a site can populate this from
+ *   whatever secret store its host provides (a platform secrets API,
+ *   getenv(), an include kept out of version control). The secrets need
+ *   never touch the site's filesystem. Never write literal key values into
+ *   a settings.php that is committed to version control.
+ * - $settings['cybersource_rest.credentials_file']: absolute path to a YAML
+ *   file, recommended outside the web root and outside the Drupal-managed
+ *   public/private filesystems, readable by the web server user only.
  *
  * The file holds one block per mode (`test`, `live`); each block carries the
  * three HTTP-Signature credentials: merchant_id, key_id (the keyId / Serial
  * Number) and shared_secret. One Cybersource merchant account serves all
- * currencies, so — unlike Secure Acceptance — there is no per-currency profile.
+ * currencies, so there is no per-currency profile.
  */
 final class CredentialProvider {
 
   /**
-   * Fixed credentials file URI. Not configurable by design (see class docs).
+   * Settings key for inline credentials (the parsed array itself).
    */
-  public const CREDENTIALS_URI = 'private://keys/cybersource_rest.yml';
+  public const SETTING_CREDENTIALS = 'cybersource_rest.credentials';
+
+  /**
+   * Settings key for the absolute path of the credentials YAML file.
+   */
+  public const SETTING_CREDENTIALS_FILE = 'cybersource_rest.credentials_file';
 
   /**
    * The credential keys every complete profile must carry.
@@ -45,7 +55,7 @@ final class CredentialProvider {
   private const REQUIRED_KEYS = ['merchant_id', 'key_id', 'shared_secret'];
 
   /**
-   * Parsed YAML cache, keyed by URI, with mtime for invalidation.
+   * Parsed YAML cache, keyed by path, with mtime for invalidation.
    *
    * @var array<string, array{mtime:int, data:array<string, mixed>}>
    */
@@ -53,44 +63,85 @@ final class CredentialProvider {
 
   public function __construct(
     protected LoggerInterface $logger,
-    protected StreamWrapperManagerInterface $streamWrapperManager,
+    protected Settings $settings,
   ) {}
 
   /**
-   * Parse and cache the credentials file.
+   * Whether either credentials setting is present in settings.php.
+   *
+   * Presence only — the credentials may still be incomplete or invalid;
+   * load() reports that with its own actionable messages.
+   */
+  public function isConfigured(): bool {
+    return $this->settings->get(self::SETTING_CREDENTIALS) !== NULL
+      || $this->settings->get(self::SETTING_CREDENTIALS_FILE) !== NULL;
+  }
+
+  /**
+   * A printable description of where the credentials come from.
+   *
+   * Safe to show to admins (it never contains secret values): either the
+   * settings key for inline credentials, or the configured file path.
+   */
+  public function source(): string {
+    if ($this->settings->get(self::SETTING_CREDENTIALS) !== NULL) {
+      return "\$settings['" . self::SETTING_CREDENTIALS . "']";
+    }
+    $path = $this->settings->get(self::SETTING_CREDENTIALS_FILE);
+    if (is_string($path) && $path !== '') {
+      return $path;
+    }
+    return "\$settings['" . self::SETTING_CREDENTIALS_FILE . "']";
+  }
+
+  /**
+   * Resolve and cache the credentials.
    *
    * @return array<string, mixed>
-   *   The parsed YAML.
+   *   The credentials array (see the class docs for the structure).
    *
    * @throws \RuntimeException
-   *   If the private filesystem is unconfigured, or the file is missing,
-   *   unreadable, or invalid.
+   *   If neither setting is configured, or the configured value/file is
+   *   missing, unreadable, or invalid.
    */
   public function load(): array {
-    $uri = self::CREDENTIALS_URI;
-    if (!$this->streamWrapperManager->isValidUri($uri)) {
+    $inline = $this->settings->get(self::SETTING_CREDENTIALS);
+    if ($inline !== NULL) {
+      if (!is_array($inline)) {
+        throw new \RuntimeException(sprintf(
+          '$settings["%s"] must be an array (see cybersource_rest.credentials.example.yml for the structure).',
+          self::SETTING_CREDENTIALS
+        ));
+      }
+      return $inline;
+    }
+
+    $path = $this->settings->get(self::SETTING_CREDENTIALS_FILE);
+    if (!is_string($path) || $path === '') {
       throw new \RuntimeException(sprintf(
-        'The private filesystem is not configured, so %s cannot exist. Set $settings["file_private_path"].',
-        $uri
+        'No Cybersource REST credentials are configured. In settings.php set $settings["%s"] to the absolute path of your credentials YAML file (outside the web root), or provide the credentials array as $settings["%s"]. See README.md.',
+        self::SETTING_CREDENTIALS_FILE,
+        self::SETTING_CREDENTIALS
       ));
     }
-    if (!file_exists($uri)) {
+    if (!file_exists($path)) {
       throw new \RuntimeException(sprintf(
-        'Cybersource REST credentials file not found at %s. Place the file there.',
-        $uri
+        'Cybersource REST credentials file not found at %s (from $settings["%s"]). Place the file there or correct the setting.',
+        $path,
+        self::SETTING_CREDENTIALS_FILE
       ));
     }
-    if (!is_readable($uri)) {
-      throw new \RuntimeException(sprintf('Cybersource REST credentials file is not readable: %s', $uri));
+    if (!is_readable($path)) {
+      throw new \RuntimeException(sprintf('Cybersource REST credentials file is not readable: %s', $path));
     }
-    $this->warnIfWorldReadable();
-    $mtime = (int) @filemtime($uri);
-    if (isset($this->cache[$uri]) && $this->cache[$uri]['mtime'] === $mtime) {
-      return $this->cache[$uri]['data'];
+    $this->warnIfWorldReadable($path);
+    $mtime = (int) @filemtime($path);
+    if (isset($this->cache[$path]) && $this->cache[$path]['mtime'] === $mtime) {
+      return $this->cache[$path]['data'];
     }
-    $raw = @file_get_contents($uri);
+    $raw = @file_get_contents($path);
     if ($raw === FALSE) {
-      throw new \RuntimeException(sprintf('Cybersource REST credentials file could not be read: %s', $uri));
+      throw new \RuntimeException(sprintf('Cybersource REST credentials file could not be read: %s', $path));
     }
     try {
       $data = Yaml::parse($raw);
@@ -101,35 +152,27 @@ final class CredentialProvider {
     if (!is_array($data)) {
       throw new \RuntimeException('Cybersource REST credentials file did not parse to a mapping.');
     }
-    $this->cache[$uri] = ['mtime' => $mtime, 'data' => $data];
+    $this->cache[$path] = ['mtime' => $mtime, 'data' => $data];
     return $data;
   }
 
   /**
    * Warn once per request if the credentials file is world-readable.
    *
-   * File permissions are only meaningful when the private filesystem lives
-   * on local disk, and FileSystemInterface::realpath() may only be used on
-   * stream wrappers known to be local — so the check runs only for
-   * LocalStream wrappers and is skipped for remote ones (e.g. S3), whose
-   * access control is the remote service's concern.
+   * Best-effort: fileperms() only means anything for plain local paths, and
+   * returns FALSE for paths it cannot stat, which is silently skipped.
+   *
+   * @param string $path
+   *   The credentials file path.
    */
-  protected function warnIfWorldReadable(): void {
+  protected function warnIfWorldReadable(string $path): void {
     static $checked = FALSE;
     if ($checked) {
       return;
     }
     $checked = TRUE;
-    $wrapper = $this->streamWrapperManager->getViaUri(self::CREDENTIALS_URI);
-    if (!$wrapper instanceof LocalStream) {
-      return;
-    }
-    // StreamWrapperInterface::realpath() is typed string but documents (and
-    // LocalStream implements) FALSE on failure — e.g. a vfs-backed test
-    // filesystem — so guard by truthiness rather than !== FALSE.
-    $real = $wrapper->realpath();
-    if ($real && ($perms = @fileperms($real)) !== FALSE && ($perms & 0004)) {
-      $this->logger->warning('Cybersource REST credentials file @uri is world-readable; restrict it to the web server user.', ['@uri' => self::CREDENTIALS_URI]);
+    if (($perms = @fileperms($path)) !== FALSE && ($perms & 0004)) {
+      $this->logger->warning('Cybersource REST credentials file @path is world-readable; restrict it to the web server user.', ['@path' => $path]);
     }
   }
 
@@ -225,9 +268,8 @@ final class CredentialProvider {
    * Optional key-expiry dates per mode.
    *
    * Operators may copy a REST API key's expiry / rotation date from the
-   * Business
-   * Center into an optional `key_expiry` field (YYYY-MM-DD). Used only for the
-   * status-report reminder; never required for authentication.
+   * Business Center into an optional `key_expiry` field (YYYY-MM-DD). Used
+   * only for the status-report reminder; never required for authentication.
    *
    * @return array<string, string>
    *   Keyed by mode ('test' / 'live') => 'YYYY-MM-DD'.

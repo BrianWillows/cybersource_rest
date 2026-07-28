@@ -36,7 +36,7 @@ use Symfony\Component\HttpFoundation\RequestStack;
  * token server-side via the Cybersource REST API.
  *
  * API credentials (merchant id / keyId / shared secret) are NOT stored in site
- * config — they are resolved at runtime, by mode, from a private .yml file (see
+ * config — they are resolved at runtime, by mode, from settings.php (see
  * \Drupal\cybersource_rest\CredentialProvider), so secrets never enter config
  * exports or git.
  */
@@ -180,16 +180,16 @@ class CybersourceRest extends OnsitePaymentGatewayBase implements CybersourceRes
   public function buildConfigurationForm(array $form, FormStateInterface $form_state): array {
     $form = parent::buildConfigurationForm($form, $form_state);
 
-    // Credentials are read from a FIXED private file
-    // (private://keys/cybersource_rest.yml) and are deliberately NOT
-    // configurable here: keeping the secrets and their location out of config
-    // means they cannot leak through config export/sync, and changing what
-    // the gateway authenticates with always requires filesystem (deployment)
-    // access rather than a Drupal role. This panel only reports whether that
-    // file is present and which modes it covers.
+    // Credentials come from settings.php (an inline array or a file path;
+    // see CredentialProvider) and are deliberately NOT configurable here:
+    // keeping the secrets and their location out of config means they cannot
+    // leak through config export/sync, and changing what the gateway
+    // authenticates with always requires filesystem (deployment) access
+    // rather than a Drupal role. This panel only reports whether credentials
+    // are present and which modes they cover.
     $form['credentials_status'] = [
       '#type' => 'item',
-      '#title' => $this->t('Credentials file'),
+      '#title' => $this->t('Credentials'),
       '#markup' => $this->credentialsStatus(),
     ];
 
@@ -865,19 +865,19 @@ class CybersourceRest extends OnsitePaymentGatewayBase implements CybersourceRes
   }
 
   /**
-   * Render a human-readable status of the configured credentials file.
+   * Render a human-readable status of the configured credentials.
    */
   protected function credentialsStatus(): string {
     try {
       $modes = $this->credentials->configuredModes();
-      return (string) $this->t('@uri is readable. Configured modes: @modes.', [
-        '@uri' => CredentialProvider::CREDENTIALS_URI,
+      return (string) $this->t('Credentials loaded from @source. Configured modes: @modes.', [
+        '@source' => $this->credentials->source(),
         '@modes' => $modes ? implode(', ', $modes) : $this->t('(none)'),
       ]);
     }
     catch (\Throwable $e) {
-      return (string) $this->t('⚠ @uri could not be loaded. Ensure the private filesystem is configured and the file is present and valid YAML.', [
-        '@uri' => CredentialProvider::CREDENTIALS_URI,
+      return (string) $this->t('⚠ Credentials could not be loaded from @source. Set $settings["cybersource_rest.credentials_file"] (or $settings["cybersource_rest.credentials"]) in settings.php and ensure the credentials are valid YAML. See the status report and README.', [
+        '@source' => $this->credentials->source(),
       ]);
     }
   }

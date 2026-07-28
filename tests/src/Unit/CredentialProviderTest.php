@@ -4,18 +4,17 @@ declare(strict_types=1);
 
 namespace Drupal\Tests\cybersource_rest\Unit;
 
-use Drupal\Core\StreamWrapper\StreamWrapperManagerInterface;
+use Drupal\Core\Site\Settings;
 use Drupal\cybersource_rest\CredentialProvider;
-use Drupal\Tests\cybersource_rest\Unit\Fixture\NonLocalPrivateStreamWrapper;
 use Drupal\Tests\UnitTestCase;
 use Psr\Log\NullLogger;
 
 /**
- * Tests credential resolution from the fixed private YAML file.
+ * Tests credential resolution from the settings.php-provided sources.
  *
- * The private:// scheme is backed by a NON-local test stream wrapper (one
- * realpath() cannot resolve), so every test here also proves the provider
- * works when the private filesystem is remote (e.g. S3).
+ * Covers both sources: the inline $settings['cybersource_rest.credentials']
+ * array and the $settings['cybersource_rest.credentials_file'] YAML path, and
+ * the precedence between them.
  *
  * @coversDefaultClass \Drupal\cybersource_rest\CredentialProvider
  * @group cybersource_rest
@@ -23,26 +22,44 @@ use Psr\Log\NullLogger;
 class CredentialProviderTest extends UnitTestCase {
 
   /**
-   * Directory backing the fake private:// scheme.
+   * Directory holding the credentials file fixture.
    *
    * @var string
    */
-  protected string $privateDir;
+  protected string $credsDir;
 
   /**
-   * The provider under test (file present).
+   * The provider under test (file-based, file present).
    *
    * @var \Drupal\cybersource_rest\CredentialProvider
    */
   protected CredentialProvider $provider;
 
   /**
+   * The credentials structure every test starts from.
+   *
+   * @var array<string, mixed>
+   */
+  protected const CREDENTIALS = [
+    'test' => [
+      'merchant_id' => 'test_merchant',
+      'key_id' => 'test-key-id',
+      'shared_secret' => 'test-secret',
+    ],
+    'live' => [
+      'merchant_id' => 'live_merchant',
+      'key_id' => 'live-key-id',
+      'shared_secret' => 'live-secret',
+    ],
+  ];
+
+  /**
    * {@inheritdoc}
    */
   protected function setUp(): void {
     parent::setUp();
-    $this->privateDir = sys_get_temp_dir() . '/crest_' . uniqid();
-    mkdir($this->privateDir . '/keys', 0777, TRUE);
+    $this->credsDir = sys_get_temp_dir() . '/crest_' . uniqid();
+    mkdir($this->credsDir, 0777, TRUE);
     $this->writeCredentials(<<<YAML
     test:
       merchant_id: test_merchant
@@ -53,53 +70,32 @@ class CredentialProviderTest extends UnitTestCase {
       key_id: live-key-id
       shared_secret: "live-secret"
     YAML);
-    NonLocalPrivateStreamWrapper::$root = $this->privateDir;
-    if (in_array('private', stream_get_wrappers(), TRUE)) {
-      stream_wrapper_unregister('private');
-    }
-    stream_wrapper_register('private', NonLocalPrivateStreamWrapper::class);
-    $this->provider = new CredentialProvider(new NullLogger(), $this->mockStreamWrapperManager(TRUE));
+    $this->provider = $this->fileProvider();
   }
 
   /**
    * {@inheritdoc}
    */
   protected function tearDown(): void {
-    if (in_array('private', stream_get_wrappers(), TRUE)) {
-      stream_wrapper_unregister('private');
-    }
-    @unlink($this->privateDir . '/keys/cybersource_rest.yml');
-    @rmdir($this->privateDir . '/keys');
-    @rmdir($this->privateDir);
+    @unlink($this->credsDir . '/cybersource_rest.yml');
+    @rmdir($this->credsDir);
     parent::tearDown();
   }
 
   /**
-   * Write the backing credentials file for the fake private:// scheme.
+   * Write the backing credentials file for the fixture directory.
    */
   protected function writeCredentials(string $yaml): void {
-    file_put_contents($this->privateDir . '/keys/cybersource_rest.yml', $yaml);
+    file_put_contents($this->credsDir . '/cybersource_rest.yml', $yaml);
   }
 
   /**
-   * A stream_wrapper_manager mock for the fake (non-local) private scheme.
-   *
-   * The mocked getViaUri() returns NULL — not a LocalStream — mirroring how
-   * the provider must treat a remote wrapper: no realpath(), no permission
-   * checks against a local path.
+   * A provider reading the fixture file via the credentials_file setting.
    */
-  protected function mockStreamWrapperManager(bool $valid): StreamWrapperManagerInterface {
-    $manager = $this->createMock(StreamWrapperManagerInterface::class);
-    $manager->method('isValidUri')->willReturn($valid);
-    $manager->method('getViaUri')->willReturn(NULL);
-    return $manager;
-  }
-
-  /**
-   * A fresh provider instance (empty parse cache) over the current file.
-   */
-  protected function freshProvider(): CredentialProvider {
-    return new CredentialProvider(new NullLogger(), $this->mockStreamWrapperManager(TRUE));
+  protected function fileProvider(): CredentialProvider {
+    return new CredentialProvider(new NullLogger(), new Settings([
+      CredentialProvider::SETTING_CREDENTIALS_FILE => $this->credsDir . '/cybersource_rest.yml',
+    ]));
   }
 
   /**
@@ -139,7 +135,7 @@ class CredentialProviderTest extends UnitTestCase {
       merchant_id: test_merchant
       key_id: test-key-id
     YAML);
-    $provider = $this->freshProvider();
+    $provider = $this->fileProvider();
     $this->assertFalse($provider->hasProfile('test'));
     $this->assertSame([], $provider->configuredModes());
     $this->expectException(\RuntimeException::class);
@@ -159,27 +155,85 @@ class CredentialProviderTest extends UnitTestCase {
   }
 
   /**
-   * An absent credentials file throws.
+   * An absent credentials file throws with the configured path in the message.
    *
    * @covers ::load
    */
   public function testMissingFileThrows(): void {
-    unlink($this->privateDir . '/keys/cybersource_rest.yml');
+    unlink($this->credsDir . '/cybersource_rest.yml');
     $this->expectException(\RuntimeException::class);
     $this->expectExceptionMessageMatches('/not found/');
     $this->provider->getProfile('test');
   }
 
   /**
-   * An unconfigured private filesystem throws its own actionable message.
+   * Neither setting configured throws its own actionable message.
+   *
+   * @covers ::load
+   * @covers ::isConfigured
+   */
+  public function testUnconfiguredSettingsThrow(): void {
+    $provider = new CredentialProvider(new NullLogger(), new Settings([]));
+    $this->assertFalse($provider->isConfigured());
+    $this->expectException(\RuntimeException::class);
+    $this->expectExceptionMessageMatches('/No Cybersource REST credentials are configured/');
+    $provider->getProfile('test');
+  }
+
+  /**
+   * Inline credentials work without any file.
+   *
+   * @covers ::load
+   * @covers ::getProfile
+   * @covers ::isConfigured
+   */
+  public function testInlineCredentials(): void {
+    $provider = new CredentialProvider(new NullLogger(), new Settings([
+      CredentialProvider::SETTING_CREDENTIALS => self::CREDENTIALS,
+    ]));
+    $this->assertTrue($provider->isConfigured());
+    $this->assertSame('live_merchant', $provider->getProfile('live')['merchant_id']);
+    $this->assertSame('test_merchant', $provider->getProfile('test')['merchant_id']);
+  }
+
+  /**
+   * Inline credentials take precedence over a configured file path.
+   *
+   * @covers ::load
+   * @covers ::source
+   */
+  public function testInlineCredentialsTakePrecedence(): void {
+    $inline = self::CREDENTIALS;
+    $inline['test']['merchant_id'] = 'inline_merchant';
+    $provider = new CredentialProvider(new NullLogger(), new Settings([
+      CredentialProvider::SETTING_CREDENTIALS => $inline,
+      CredentialProvider::SETTING_CREDENTIALS_FILE => $this->credsDir . '/cybersource_rest.yml',
+    ]));
+    $this->assertSame('inline_merchant', $provider->getProfile('test')['merchant_id']);
+    $this->assertSame("\$settings['cybersource_rest.credentials']", $provider->source());
+  }
+
+  /**
+   * A non-array inline credentials setting throws.
    *
    * @covers ::load
    */
-  public function testUnconfiguredPrivateFilesystemThrows(): void {
-    $provider = new CredentialProvider(new NullLogger(), $this->mockStreamWrapperManager(FALSE));
+  public function testNonArrayInlineCredentialsThrow(): void {
+    $provider = new CredentialProvider(new NullLogger(), new Settings([
+      CredentialProvider::SETTING_CREDENTIALS => 'not-an-array',
+    ]));
     $this->expectException(\RuntimeException::class);
-    $this->expectExceptionMessageMatches('/private filesystem is not configured/');
+    $this->expectExceptionMessageMatches('/must be an array/');
     $provider->getProfile('test');
+  }
+
+  /**
+   * The source() description names the file path for file-based credentials.
+   *
+   * @covers ::source
+   */
+  public function testSourceNamesFilePath(): void {
+    $this->assertSame($this->credsDir . '/cybersource_rest.yml', $this->provider->source());
   }
 
   /**
@@ -203,7 +257,7 @@ class CredentialProviderTest extends UnitTestCase {
       shared_secret: "live-secret"
     YAML);
     // Only the mode that has a key_expiry is reported.
-    $this->assertSame(['test' => '2027-01-01'], $this->freshProvider()->keyExpiries());
+    $this->assertSame(['test' => '2027-01-01'], $this->fileProvider()->keyExpiries());
   }
 
 }

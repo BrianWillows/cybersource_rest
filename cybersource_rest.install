@@ -21,20 +21,16 @@ declare(strict_types=1);
 use Drupal\Core\Hook\Attribute\LegacyRequirementsHook;
 
 /**
- * Credentials file URI.
- *
- * A literal (not the CredentialProvider constant) because hook_install() can
- * run before the module's own classes are autoloadable.
- */
-// phpcs:ignore DrupalPractice.Constants.GlobalConstant.GlobalConstant
-const CYBERSOURCE_REST_CREDENTIALS_URI = 'private://keys/cybersource_rest.yml';
-
-/**
  * Implements hook_install().
+ *
+ * Only points the site builder at the manual setup steps; no config is created.
  */
 function cybersource_rest_install(): void {
-  \Drupal::messenger()->addStatus(t('Cybersource REST (Microform) installed. To finish: add a "Cybersource (REST Microform)" payment gateway under Commerce » Configuration » Payment gateways, place your REST API credentials in %uri (see README), and enforce a Content-Security-Policy on checkout.', [
-    '%uri' => CYBERSOURCE_REST_CREDENTIALS_URI,
+  // The settings key is a literal (not the CredentialProvider constant)
+  // because hook_install() can run before the module's own classes are
+  // autoloadable.
+  \Drupal::messenger()->addStatus(t('Cybersource REST (Microform) installed. To finish: add a "Cybersource (REST Microform)" payment gateway under Commerce » Configuration » Payment gateways, provide your REST API credentials via %setting in settings.php (see README), and enforce a Content-Security-Policy on checkout.', [
+    '%setting' => "\$settings['cybersource_rest.credentials_file']",
   ]));
 }
 
