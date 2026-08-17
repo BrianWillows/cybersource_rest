@@ -1,5 +1,10 @@
 # Cybersource REST (Microform)
 
+> **Canonical home: [drupal.org/project/cybersource_rest](https://www.drupal.org/project/cybersource_rest).**
+> The GitHub repository is a read-only mirror. Please file bugs and feature
+> requests in the [drupal.org issue queue](https://www.drupal.org/project/issues/cybersource_rest)
+> and send merge requests to the drupal.org GitLab repository, not to GitHub.
+
 A Drupal Commerce payment gateway for Cybersource using the **REST API** and
 **Flex Microform v2**. The card number and CVV are entered into
 Cybersource-hosted Microform iframes — they never touch this server — and the
@@ -201,3 +206,8 @@ resulting transaction.
   uncertain outcome is logged to the order's audit log for manual reconciliation
   in the Business Center rather than auto-recovered (a timeout-void / status
   query flow is a planned hardening item).
+
+
+## Licence
+
+GPL-2.0-or-later, the same licence as Drupal itself.
